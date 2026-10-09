@@ -1,5 +1,5 @@
 -- =====================================================================
--- agent-auth-lab database: roles, schema, and Row-Level Security.
+-- a-guard database: roles, schema, and Row-Level Security.
 --
 -- Enforcement model (three questions, three mechanisms):
 --   SCOPE       (what operation?)  -> HTTP layer 401/403 (not here)

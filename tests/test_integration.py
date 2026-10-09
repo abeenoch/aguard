@@ -201,7 +201,7 @@ def test_log_canary_no_pii_in_written_output(api_client, caplog):
                          email="alice@example.com",
                          password="correct-horse-battery",
                          scope="openid email orders:read orders:write")
-    with caplog.at_level(logging.INFO, logger="agent-auth-lab.api"):
+    with caplog.at_level(logging.INFO, logger="a-guard.api"):
         resp = api_client.post(
             "/api/documents",
             json={"title": "call alice@example.com re card "
@@ -210,7 +210,7 @@ def test_log_canary_no_pii_in_written_output(api_client, caplog):
             headers=_auth(tokens["access_token"]))
     assert resp.status_code == 201
     api_records = [r for r in caplog.records
-                   if r.name == "agent-auth-lab.api"]
+                   if r.name == "a-guard.api"]
     assert api_records, "canary vacuous: no log record was captured"
     dumped = "\n".join(r.getMessage() for r in api_records)
     assert "alice@example.com" not in dumped

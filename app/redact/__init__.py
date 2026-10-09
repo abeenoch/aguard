@@ -1,1 +1,1 @@
-"""agent-auth-lab PII redaction package."""
+"""a-guard PII redaction package."""

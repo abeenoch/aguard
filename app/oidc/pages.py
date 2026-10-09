@@ -33,7 +33,7 @@ def error_page(*, title: str, detail: str) -> str:
 def login_form(*, next_url: str, error: str | None = None) -> str:
     error_html = f'<p style="color:#b00020">{escape(error)}</p>' if error else ""
     return f"""<!doctype html>
-<html><head><title>Sign in — agent-auth-lab</title></head>
+<html><head><title>Sign in — a-guard</title></head>
 <body style="font-family: sans-serif; max-width: 24rem; margin: 4rem auto;">
   <h1>Sign in</h1>
   {error_html}
@@ -74,7 +74,7 @@ def consent_form(
         if resource else ""
     )
     return f"""<!doctype html>
-<html><head><title>Authorize — agent-auth-lab</title></head>
+<html><head><title>Authorize — a-guard</title></head>
 <body style="font-family: sans-serif; max-width: 28rem; margin: 4rem auto;">
   <h1>Authorize application</h1>
   <p>Signed in as <strong>{escape(user_label)}</strong></p>

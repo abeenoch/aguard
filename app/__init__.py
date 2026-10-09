@@ -1,4 +1,4 @@
-"""A-guard (agent-auth-lab) package.
+"""A-guard package.
 
 Importing the package loads .env FIRST (via app.settings) so every module
 in the package — including ones that read os.environ directly at import

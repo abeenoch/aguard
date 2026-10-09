@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import Principal, require_principal, require_scope
 from app.db.session import scoped_session
 
-logger = logging.getLogger("agent-auth-lab.api")
+logger = logging.getLogger("a-guard.api")
 
 router = APIRouter(prefix="/api")
 

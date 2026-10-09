@@ -96,7 +96,7 @@ class Settings:
     # `aud` for access tokens. Audience restriction means a token minted for
     # this API is rejected by any other service that checks `aud` — kills
     # cross-service token replay even with a valid signature.
-    resource_audience: str = _env("RESOURCE_AUDIENCE", "agent-auth-lab-api")
+    resource_audience: str = _env("RESOURCE_AUDIENCE", "a-guard-api")
 
     # RFC 8707 (resource indicators) — the MCP-compliance piece.
     # mcp_resource_id is what clients pass as `resource` to get tokens

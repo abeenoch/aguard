@@ -147,21 +147,18 @@ Reading the audit trail is itself a security-relevant action. Operator views
 should append an `agent_audit` row (`client_id="operator-console"`). A log you
 can read without leaving a trace is a liability.
 
-### 4.5 Tenant scope — **DECISION NEEDED**
+### 4.5 Tenant scope — **DECIDED: add `org_id`**
 
-`SECURITY.md` states multi-tenancy is *one deployment per tenant*. If that
-holds, the operator is the deployment owner viewing only their own rows: **no
-cross-tenant exposure**, and the risk collapses to "operator sees their own
-org", which is the point.
+`SECURITY.md` states multi-tenancy is *one deployment per tenant*. If that were
+permanent, the operator would be the deployment owner viewing only their own
+rows: **no cross-tenant exposure**, and the risk collapses to "operator sees
+their own org", which is the point.
 
 But `agent_audit` has **no tenant/org column** — `subject` is the only signal.
-So:
-
-- **If** one-deployment-per-tenant is permanent → the view is org-scoped by
-  construction; document it and move on.
-- **If** multi-tenancy is coming → add `org_id` to `agent_audit` *now*, before
-  the view exists, and scope the operator query by it. Retrofitting a tenant
-  key onto a write-only audit table later is painful and error-prone.
+Because "one deployment per tenant" is a deployment choice rather than an
+enforced invariant, we pre-empt it: **add `org_id` to `agent_audit` in E3**,
+while the table is small, and scope the operator query by it. Retrofitting a
+tenant key onto a write-only audit table later is painful and error-prone.
 
 ### 4.6 Surface threat model
 
@@ -266,11 +263,15 @@ Labels bound to inputs, visible focus states, semantic `<table>` markup with
 headers, contrast ≥ 4.5:1, fully keyboard-operable. A security tool that is
 unusable with a keyboard is a security tool people route around.
 
-### 6.6 Naming — **DECISION NEEDED**
+### 6.6 Naming — **RESOLVED**
 
-The package and README say **a-guard**; the actual pages say
-**"Sign in — agent-auth-lab"** and the callback page likewise. The inconsistency
-is shown to *every* end user on the login page. Pick one name and apply it.
+The product name is **a-guard**, everywhere: package, README, page titles,
+logger names (`a-guard.api`, `a-guard.mcp`, `a-guard.startup`), and the default
+JWT `aud` (`a-guard-api`). The historical `agent-auth-lab` strings are gone.
+
+One deliberate exception: the **Postgres database name `agent_auth`** is left
+alone (see §9 D6) — it is not a display string, and renaming it mutates a live
+database rather than a file.
 
 ---
 
@@ -305,17 +306,21 @@ against.
 
 ---
 
-## 9. Decisions needed
+## 9. Decisions
 
-Blocking or shaping the work above:
-
-| # | Decision | Options | Default if silent |
+| # | Decision | Status | Resolution |
 |---|---|---|---|
-| D1 | Operator isolation | A: dedicated `operator_readonly` + `app_login_operator` (§4.2) · B: reuse `human_admin` on `app_user` | **A** |
-| D2 | Tenant model of the view | one-deployment-per-tenant (org-scoped by construction) · multi-tenant (`org_id` on `agent_audit`) | Add `org_id` in E3 while the table is small |
-| D3 | Product name | **a-guard** · **agent-auth-lab** · something else | a-guard (matches package/README) |
-| D4 | Auth-page visual direction | minimal/utilitarian · light branded | minimal (P4) |
-| D5 | Operator sign-in | reuse `/login` + session with an `operator` capability · separate path | reuse (§4.3) |
+| D1 | Operator isolation | ✅ decided | Dedicated `operator_readonly` role + `app_login_operator` login (§4.2 option A) |
+| D2 | Tenant model of the view | ✅ decided | Add `org_id` to `agent_audit` in E3, while the table is small |
+| D3 | Product name | ✅ done | **a-guard** — applied to package, pages, logger names, and default `aud` |
+| D4 | Auth-page visual direction | open | minimal / utilitarian (**P4**) |
+| D5 | Operator sign-in | open | reuse `/login` + session with an `operator` capability (§4.3) |
+| D6 | Database name | open | **keep `agent_auth`** (default) · rename to `a_guard` — requires a coordinated `ALTER DATABASE` plus updates to `settings.py`, `schema.sql`, CI, compose, and three test files |
+
+D6 is deliberately *not* bundled with D3: the product rename touched files,
+whereas the DB rename mutates a running database — and the local Postgres is a
+**shared instance** hosting unrelated databases. That is an operator's call,
+not a refactor.
 
 ---
 
