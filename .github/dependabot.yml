@@ -14,6 +14,15 @@ updates:
         update-types: ["minor", "patch"]
       # ...but a MAJOR arrives alone, because that is the one that needs a
       # human to read a changelog before merging.
+    ignore:
+      # mcp's next major changes the API this project is built on
+      # (FastMCP / AuthSettings / TokenVerifier). The <2 bound in
+      # pyproject.toml is the enforcement point and CI proves it: the
+      # widen-to-<3 PR failed lint and all three test jobs. Ignored here so it
+      # does not keep re-opening until adopting the new SDK is a scheduled
+      # piece of work rather than a version bump.
+      - dependency-name: mcp
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies"]
 
   - package-ecosystem: github-actions
