@@ -157,6 +157,12 @@ def build_mcp(keys: KeyManager) -> FastMCP:
             validate_token_resource=True,   # aud must name THIS resource
         ),
         stateless_http=True,
+        # main.py attaches this ASGI app at exactly "/mcp" via a Starlette
+        # Route, which does NOT strip the path prefix — so the sub-app's own
+        # route must match the FULL public path. (A Mount would strip it, but
+        # Mount only matches "/mcp/" and would 307-redirect POST /mcp, which
+        # breaks MCP clients; Mount("/") would instead swallow every unmatched
+        # path and disable trailing-slash redirects app-wide.)
         streamable_http_path="/mcp",
         json_response=True,   # request/response only: plain JSON, no SSE framing
         warn_on_duplicate_tools=False,

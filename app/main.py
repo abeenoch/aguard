@@ -97,10 +97,18 @@ def create_app() -> FastAPI:
         # Public keys only — ManagedKey.public_jwk() structurally omits `d`.
         return keys.jwks
 
-    # Mounted LAST so explicit routes above always win. The sub-app serves
-    # POST /mcp (Streamable HTTP, guarded by its own bearer middleware); any
-    # RFC 9728 metadata route it would add is shadowed by ours just above.
-    application.mount("/", mcp_app)
+    # Attach the MCP ASGI app at EXACTLY /mcp. Neither mount target works:
+    #   * Mount("/")    swallows every unmatched path, which disables
+    #                   Starlette's trailing-slash redirects app-wide
+    #                   (GET /login/ stops redirecting to /login)
+    #   * Mount("/mcp") only matches "/mcp/" (a Mount appends a path segment),
+    #                   so POST /mcp would 307-redirect — fatal for MCP clients
+    # A plain Starlette Route matches the exact path and leaves the rest of the
+    # router untouched. Note a Route does NOT strip the prefix, so the MCP
+    # app's own route stays "/mcp" (see build_mcp). The sub-app keeps its
+    # bearer middleware, so /mcp remains authenticated.
+    from starlette.routing import Route
+    application.router.routes.append(Route("/mcp", endpoint=mcp_app))
 
     return application
 
