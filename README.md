@@ -31,6 +31,38 @@ agent might talk its way around.
 
 The three layers are independent: use one, two, or all three.
 
+## Protect your own MCP server
+
+a-guard issues the tokens; your server just verifies them. No shared secret, no
+signing key, no session table:
+
+```python
+from fastapi import Depends, FastAPI, Request
+from aguard import ResourceServerGuard
+
+guard = ResourceServerGuard(
+    issuer="http://localhost:8000",         # the a-guard AS
+    audience="http://localhost:9000/mcp",   # YOUR resource id
+)
+app = FastAPI()
+
+@app.post("/mcp")
+def mcp(claims: dict = Depends(guard.dependency())):
+    return {"sub": claims["sub"]}           # verified, not asserted
+```
+
+The guard fetches the issuer's JWKS (and re-resolves on key rotation), then
+checks the signature, `iss`, and `exp` — and, critically, that **`aud` names
+your resource**. A token minted for a different service is refused here even
+though its signature is valid: that's RFC 8707 audience binding, and it's what
+stops cross-service token replay.
+
+An unauthenticated request gets `401` **plus**
+`WWW-Authenticate: Bearer resource_metadata="…"` — which is how an MCP client
+*discovers* the authorization server instead of being configured with it.
+
+Runnable version: [`examples/protect_mcp_server.py`](examples/protect_mcp_server.py).
+
 ## Quickstart (local)
 
 ```bash
@@ -298,6 +330,8 @@ with the AS (split into a separate service before any real deployment).
 - `/userinfo`, `/revoke` (RFC 7009), `/introspect` (RFC 7662) ✅ — formerly advertised, now real
 - **MCP resource server** at `/mcp` ✅ — Streamable HTTP, audience-bound tokens, DB-enforced tools
 - **CLI observability** ✅ — `scripts/agctl.py`: redaction proof, audit trail, CSV/JSONL export
+- **Packaging** ✅ — `agctl` console script; `from aguard import ResourceServerGuard`; wheel verified to contain its data files
+- **Downstream guard** ✅ — protect any MCP server in ~10 lines (`examples/protect_mcp_server.py`)
 - **Persistent authorization state** ✅ — pluggable stores; `STORE_BACKEND=postgres` makes code tombstones and refresh-family revocation survive restarts and span workers
 - Token-endpoint rate limiting; readiness probe that actually checks the database
 - Restyle the auth pages (Jinja2 + design tokens) — see [docs/DESIGN.md](docs/DESIGN.md) → E1
