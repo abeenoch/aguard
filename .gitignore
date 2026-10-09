@@ -1,0 +1,17 @@
+# --- virtual environment / Python ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# --- secrets: NEVER commit ---
+.env
+
+# --- signing keys: NEVER commit ---
+data/keys/
+
+# --- runtime artifacts ---
+*.log
+.pytest_cache/

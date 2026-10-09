@@ -1,0 +1,9 @@
+[project]
+name = "agent-auth-lab"
+version = "0.1.0"
+description = "Option 6: PII-redacting auth middleware, hand-rolled OIDC, read-only agent DB roles"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

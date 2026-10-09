@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pyjwt
+cryptography
+psycopg[binary]
+psycopg-pool
+python-multipart
+pytest
+httpx

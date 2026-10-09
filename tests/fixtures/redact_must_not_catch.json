@@ -1,0 +1,16 @@
+[
+  {"name": "order_id", "value": {"order_id": "ORD-2026-1187"}},
+  {"name": "payment_ref", "value": {"payment_ref": "INV-2026-0601-7788-99"}},
+  {"name": "uuid_trace", "value": {"trace_id": "9f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8"}},
+  {"name": "iso_datetime", "value": {"invoice_date": "2026-06-01T09:30:00"}},
+  {"name": "amount", "value": {"amount": 49.99}},
+  {"name": "username_readable", "value": {"username": "alice_svc"}},
+  {"name": "user_id_readable", "value": {"user_id": "usr_9f3a"}},
+  {"name": "card_last4_allowed", "value": {"card_last4": "1111"}},
+  {"name": "eta_date_text", "value": {"notes": "ETA 2026-06-01"}},
+  {"name": "postal_code", "value": {"postal_code": "90210"}},
+  {"name": "plain_status", "value": {"status": "shipped"}},
+  {"name": "timing_text", "value": {"msg": "order completed in 42 ms for tenant acme"}},
+  {"name": "sku", "value": {"sku": "WIDGET-42-BLUE"}},
+  {"name": "confirmation_6digit", "value": {"confirmation": "C-839201"}}
+]
