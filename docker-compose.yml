@@ -1,0 +1,38 @@
+# A-guard — one-command local stack
+#   docker compose up
+# App: http://localhost:8000  ·  smoke test: python scripts/smoke.py
+name: a-guard
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: agent_auth
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?set PGPASSWORD in .env — cp .env.example .env}
+    volumes:
+      # Applied on first boot only (empty volume) — role + RLS setup
+      - ./app/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_auth"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OIDC_ISSUER: http://localhost:8000
+      DB_DSN_HUMAN: postgresql://app_login_human:human-pool-secret-dev@db:5432/agent_auth
+      DB_DSN_AGENT: postgresql://app_login_agent:agent-pool-secret-dev@db:5432/agent_auth
+      SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
+      LOG_HASH_PEPPER: ${LOG_HASH_PEPPER:-dev-only-pepper-change-me}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

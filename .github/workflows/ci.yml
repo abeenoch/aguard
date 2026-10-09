@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: ci-superuser-secret
+          POSTGRES_DB: agent_auth
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Apply database schema
+        env:
+          PGPASSWORD: ci-superuser-secret
+        run: psql -h localhost -U postgres -d agent_auth -f app/db/schema.sql
+
+      - name: Run tests
+        env:
+          # Non-default secrets even in CI — we never exercise dev defaults
+          # as if they were fine.
+          PG_SUPERUSER_PASSWORD: ci-superuser-secret
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-session-secret-not-for-prod' }}
+          LOG_HASH_PEPPER: ci-pepper-not-for-prod
+        run: pytest -q

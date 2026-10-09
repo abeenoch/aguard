@@ -23,8 +23,30 @@ from app.redact.logging import install as install_redaction
 from app.settings import settings
 
 
+def _warn_if_dev_secrets() -> None:
+    """Loud startup warning when running with well-known dev secrets.
+
+    Defaults are fine locally (documented in .env.example) but catastrophic
+    on a shared host: anyone who has read the source can forge session
+    cookies or compute correlation hashes. Fail visible, not silent."""
+    import logging
+    weak = [
+        name for value, marker, name in (
+            (settings.session_secret, b"dev-session-secret-change-me", "SESSION_SECRET"),
+            (settings.log_pepper, b"dev-only-pepper-change-me", "LOG_HASH_PEPPER"),
+        )
+        if value == marker
+    ]
+    if weak:
+        logging.getLogger("a-guard.startup").warning(
+            "INSECURE DEV SECRETS ACTIVE — override before any shared "
+            "deployment: %s (see .env.example)",
+            ", ".join(weak),
+        )
+
+
 def create_app() -> FastAPI:
-    application = FastAPI(title="agent-auth-lab", version="0.1.0")
+    application = FastAPI(title="a-guard", version="0.1.0")
 
     keys = KeyManager(settings.key_dir)
     application.state.keys = keys
@@ -37,6 +59,8 @@ def create_app() -> FastAPI:
     install_redaction("", settings.log_pepper)
     from app.redact.logging import wire_uvicorn
     wire_uvicorn(settings.log_pepper)
+
+    _warn_if_dev_secrets()
 
     application.include_router(auth_router)
     application.include_router(token_router)

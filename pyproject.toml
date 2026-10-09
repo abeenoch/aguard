@@ -1,9 +1,45 @@
 [project]
-name = "agent-auth-lab"
+name = "a-guard"
 version = "0.1.0"
-description = "Option 6: PII-redacting auth middleware, hand-rolled OIDC, read-only agent DB roles"
+description = "The security layer for AI agents: OIDC identity, PII-redacting logs, and database-enforced permissions"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "abeenoch" }]
 requires-python = ">=3.11"
+keywords = ["oauth2", "oidc", "ai-agents", "pii-redaction", "security", "mcp", "rbac"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP :: Session",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pyjwt",
+    "cryptography",
+    "psycopg[binary]",
+    "psycopg-pool",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[project.urls]
+Homepage = "https://github.com/abeenoch/a-guard"
+Issues = "https://github.com/abeenoch/a-guard/issues"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
