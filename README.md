@@ -205,6 +205,7 @@ with the AS (split into a separate service before any real deployment).
 - **MCP Authorization Server** ✅ `RFC 8414`, `RFC 9728`, `RFC 8707`, `RFC 7591` (DCR)
 - `/userinfo`, `/revoke` (RFC 7009), `/introspect` (RFC 7662) ✅ — formerly advertised, now real
 - **MCP resource server** at `/mcp` ✅ — Streamable HTTP, audience-bound tokens, DB-enforced tools
+- **Operator surface** 📐 design settled in [docs/DESIGN.md](docs/DESIGN.md) (agent activity view, operator DB role, design language) — order of operations: role → data → screen
 - Split the resource server into its own deployable service (own port, own container)
 - `docker compose up` one-command install
 - OpenTelemetry/Langfuse export of *redacted* traces
