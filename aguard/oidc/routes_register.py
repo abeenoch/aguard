@@ -26,6 +26,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from aguard.oidc.clients import Client, ClientRegistry, hash_secret
+from aguard.ratelimit import enforce_rate_limit
 from aguard.settings import settings
 
 router = APIRouter()
@@ -89,6 +90,12 @@ def _error(status: int, code: str, description: str) -> JSONResponse:
 
 @router.post("/register")
 async def register_client(request: Request) -> JSONResponse:
+    # Registration is unauthenticated by design (RFC 7591), so this ceiling is
+    # the only thing between the internet and unbounded registry growth.
+    limited = enforce_rate_limit(request, "register")
+    if limited is not None:
+        return limited
+
     registry: ClientRegistry = request.app.state.registry
 
     try:

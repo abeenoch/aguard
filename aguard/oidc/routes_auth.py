@@ -25,6 +25,7 @@ from aguard.oidc.codes import AuthCodeStore
 from aguard.oidc.pages import consent_form, error_page, login_form
 from aguard.oidc.session import create_session_token, parse_session_token
 from aguard.oidc.users import USERS, find_by_email, verify_password
+from aguard.ratelimit import enforce_rate_limit
 from aguard.settings import settings
 
 router = APIRouter()
@@ -260,6 +261,18 @@ def login(
     password: str = Form(""),
     next: str = Form("/"),
 ) -> Response:
+    # Two limits, because they see different attacks: the address catches one
+    # host hammering the form, the account catches a botnet spending many
+    # addresses on one victim. Both are checked before any password hashing —
+    # the cost of that hash is the thing an attacker is trying to buy.
+    limited = enforce_rate_limit(
+        request, "login",
+        per_identity=[("login_account", email or None)],
+        as_html=True,
+    )
+    if limited is not None:
+        return limited
+
     user = find_by_email(email)
     if user is None:
         # Dummy verify: keeps unknown-email timing indistinguishable from

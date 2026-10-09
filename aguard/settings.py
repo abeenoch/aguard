@@ -127,6 +127,36 @@ class Settings:
     #                goes undetected.
     store_backend: str = _env("STORE_BACKEND", "memory").strip().lower()
 
+    # --- Rate limiting (see aguard/ratelimit.py) ---------------------------
+    # Attempts allowed per identity per window. Windows are fixed in code
+    # (60s for /token and /login, 300s per account, 1h for /register); only the
+    # counts are deployment-tunable. These defaults are tuned for one human at
+    # a browser: machine clients that legitimately burst need a higher
+    # RATE_LIMIT_TOKEN, and a load test WILL trip them.
+    rate_limit_token: int = int(_env("RATE_LIMIT_TOKEN", "60"))
+    rate_limit_login: int = int(_env("RATE_LIMIT_LOGIN", "10"))
+    rate_limit_login_account: int = int(_env("RATE_LIMIT_LOGIN_ACCOUNT", "5"))
+    rate_limit_register: int = int(_env("RATE_LIMIT_REGISTER", "10"))
+
+    # Where attempts are counted. "memory" is PER PROCESS: with N workers the
+    # effective ceiling is N x limit. A shared backend is not implemented yet,
+    # and naming one raises rather than silently behaving like memory — see
+    # build_rate_limiter().
+    rate_limit_backend: str = _env("RATE_LIMIT_BACKEND", "memory").strip().lower()
+
+    # Trust X-Forwarded-For when deriving the caller's identity.
+    # DEFAULT FALSE, and that default is the security-relevant one: the header
+    # is client-supplied, so trusting it with no proxy in front hands an
+    # attacker unlimited fresh identities and the limit stops meaning anything.
+    # Enable only behind a proxy you control that overwrites the header.
+    rate_limit_trust_forwarded_for: bool = _env(
+        "RATE_LIMIT_TRUST_FORWARDED_FOR", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
+
+    # Cap on counted identities held in memory: bounds a key-rotation flood.
+    # The least recently used bucket is evicted when the cap is reached.
+    rate_limit_max_keys: int = int(_env("RATE_LIMIT_MAX_KEYS", "10000"))
+
     # DCR redirect-URI policy. Default is the strict OAuth 2.1 baseline:
     # https anywhere, http on loopback only (RFC 8252 for native apps).
     # MCP hosts that are editor extensions register a PRIVATE-USE scheme

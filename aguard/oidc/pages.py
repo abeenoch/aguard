@@ -1,8 +1,9 @@
 """Minimal HTML pages: login, consent, errors, demo callback.
 
 No template engine — the forms are small and EVERY interpolated value goes
-through html.escape(). (If this grew past ~4 pages, switch to Jinja2 with
-autoescaping on; hand-rolled templating is where XSS slips in.)
+through html.escape(). (This is the fifth page, which is where hand-rolled
+templating starts to cost more than it saves: the Jinja2 migration with
+autoescaping on is E1 in docs/DESIGN.md.)
 
 Security properties encoded in the markup itself:
 - login form posts to /login with `next` as a hidden field → `next` is
@@ -27,6 +28,25 @@ def error_page(*, title: str, detail: str) -> str:
   <p>{escape(detail)}</p>
   <p style="color:#666">This error was <strong>not</strong> forwarded to any
   redirect URI, because the redirect target could not be trusted.</p>
+</body></html>"""
+
+
+def rate_limited_page(*, retry_after: int) -> str:
+    """Too many attempts from this client.
+
+    Rendered rather than redirected for the same reason as error_page(): the
+    browser is never sent anywhere we have not verified. The countdown is a
+    bare integer, escaped like every other interpolated value.
+    """
+    return f"""<!doctype html>
+<html><head><title>Too many attempts — a-guard</title></head>
+<body style="font-family: sans-serif; max-width: 28rem; margin: 4rem auto;">
+  <h1>Too many attempts</h1>
+  <p>This address has made too many sign-in attempts. Try again in
+     {escape(str(retry_after))} seconds.</p>
+  <p style="color:#666; font-size:.85rem">The limit protects accounts from
+     password guessing, so a client that keeps retrying will keep being
+     refused.</p>
 </body></html>"""
 
 

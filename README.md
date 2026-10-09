@@ -107,7 +107,8 @@ psql -U postgres -d agent_auth -f aguard/db/schema.sql
 python scripts/agctl.py verify     # redaction self-check, pass/fail
 python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
 python scripts/mcp_smoke.py        # real MCP client against a live server
-pytest                             # 193 tests
+curl -s localhost:8000/readyz      # readiness: database + keystore
+pytest                             # 216 tests
 ```
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
@@ -318,11 +319,12 @@ agctl --help                    # console script (see docs/RELEASING.md)
 
 ## Status
 
-Alpha. 193 tests green (unit + live-server smoke). Known limitations are
+Alpha. 216 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — authorization state defaults to
 in-memory (set `STORE_BACKEND=postgres` before running more than one worker),
-no rate limiting yet, and the MCP resource server runs in-process
-with the AS (split into a separate service before any real deployment).
+rate-limit counters have the same per-process caveat, and the MCP resource
+server runs in-process with the AS (split into a separate service before any
+real deployment).
 
 ## Roadmap
 
@@ -333,7 +335,7 @@ with the AS (split into a separate service before any real deployment).
 - **Packaging** ✅ — `agctl` console script; `from aguard import ResourceServerGuard`; wheel verified to contain its data files
 - **Downstream guard** ✅ — protect any MCP server in ~10 lines (`examples/protect_mcp_server.py`)
 - **Persistent authorization state** ✅ — pluggable stores; `STORE_BACKEND=postgres` makes code tombstones and refresh-family revocation survive restarts and span workers
-- Token-endpoint rate limiting; readiness probe that actually checks the database
+- **Rate limiting + readiness** ✅ — `/token`, `/login` and `/register` are limited per address (plus per account for login); `GET /readyz` verifies the database and keystore, while `/healthz` stays dependency-free liveness
 - Restyle the auth pages (Jinja2 + design tokens) — see [docs/DESIGN.md](docs/DESIGN.md) → E1
 - Move users/clients out of Python constants into Postgres → E2
 - Index `agent_audit`; add `org_id` → E3

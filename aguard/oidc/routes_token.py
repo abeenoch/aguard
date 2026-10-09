@@ -38,6 +38,7 @@ from aguard.oidc.keys import KeyManager
 from aguard.oidc.pkce import verify_challenge
 from aguard.oidc.refresh import RefreshError, RefreshReuseError, RefreshTokenStore
 from aguard.oidc.users import USERS
+from aguard.ratelimit import enforce_rate_limit
 from aguard.settings import settings
 
 router = APIRouter()
@@ -177,6 +178,14 @@ def token_endpoint(
     client_secret: str | None = Form(None),
     resource: str | None = Form(None),   # RFC 8707: intended resource (aud)
 ) -> Response:
+    # Rate limit FIRST — everything below is CPU that an anonymous caller
+    # asked for. Per-address only: the values a caller can vary here
+    # (client_id, code) are not guessable secrets, so per-value buckets would
+    # grow the key space without buying protection.
+    limited = enforce_rate_limit(request, "token")
+    if limited is not None:
+        return limited
+
     registry: ClientRegistry = request.app.state.registry
     keys: KeyManager = request.app.state.keys
 
