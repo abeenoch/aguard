@@ -5,6 +5,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+# setuptools' legacy bdist_wheel leaves bdist/ or bdist.<platform>-<arch>/
+# (e.g. build\bdist.win-amd64\wheel inside build/, but top-level too).
+bdist*/
 
 # --- secrets: NEVER commit ---
 .env
