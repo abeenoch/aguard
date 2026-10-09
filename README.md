@@ -75,7 +75,7 @@ psql -U postgres -d agent_auth -f aguard/db/schema.sql
 python scripts/agctl.py verify     # redaction self-check, pass/fail
 python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
 python scripts/mcp_smoke.py        # real MCP client against a live server
-pytest                             # 183 tests
+pytest                             # 193 tests
 ```
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
@@ -286,7 +286,7 @@ agctl --help                    # console script (see docs/RELEASING.md)
 
 ## Status
 
-Alpha. 183 tests green (unit + live-server smoke). Known limitations are
+Alpha. 193 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — authorization state defaults to
 in-memory (set `STORE_BACKEND=postgres` before running more than one worker),
 no rate limiting yet, and the MCP resource server runs in-process

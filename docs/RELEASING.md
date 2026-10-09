@@ -14,6 +14,21 @@ a generic name which collides with any user's own `app` package, and
 first upload — a published import name cannot be withdrawn from anyone's
 `pip freeze`.
 
+## Name availability (checked against PyPI)
+
+| Name | Status |
+|---|---|
+| `a-guard` — our distribution | **free** |
+| `aguard` — distribution | **taken** by an unrelated project that ships a module named `agentguard` |
+
+So the distribution stays `a-guard` while the import package is `aguard`. That
+split is idiomatic (`scikit-learn` → `sklearn`) and it does **not** collide: I
+inspected their wheel, and it installs `agentguard/`, not `aguard/`.
+
+Worth knowing operationally: `pip install aguard` installs a *different*
+product. If that adjacency ever causes confusion, the import package could move
+to `a_guard`.
+
 ## 0. Preconditions
 
 - `pytest` is green.

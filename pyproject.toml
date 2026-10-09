@@ -38,7 +38,10 @@ Repository = "https://github.com/abeenoch/aguard"
 Issues = "https://github.com/abeenoch/aguard/issues"
 
 [build-system]
-requires = ["setuptools>=68"]
+# >=77 is where setuptools implements PEP 639 (SPDX `license = "Apache-2.0"`
+# and `license-files`). Older setuptools validates `project.license` against the
+# pre-639 schema and rejects the string form outright.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
