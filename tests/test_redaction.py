@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from app.redact.logging import RedactionFilter, install
-from app.redact.patterns import correlate
-from app.redact.redactor import redact_event
-from app.settings import settings
+from aguard.redact.logging import RedactionFilter, install
+from aguard.redact.patterns import correlate
+from aguard.redact.redactor import redact_event
+from aguard.settings import settings
 
 PEPPER = b"test-pepper-do-not-use"
 FIXTURES = Path(__file__).parent / "fixtures"

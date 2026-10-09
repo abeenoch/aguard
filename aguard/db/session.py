@@ -16,7 +16,7 @@ from typing import Literal
 
 from psycopg_pool import ConnectionPool
 
-from app.settings import settings
+from aguard.settings import settings
 
 _SUB_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,128}$")
 

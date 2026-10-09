@@ -57,7 +57,7 @@ class Settings:
     # Where the RSA keystore (keys.json) lives.
     key_dir: Path = Path(_env("KEY_DIR", str(PROJECT_ROOT / "data" / "keys")))
 
-    # Pool DSNs for the two least-privilege login roles (see app/db/schema.sql).
+    # Pool DSNs for the two least-privilege login roles (see aguard/db/schema.sql).
     # Each login is a member of EXACTLY ONE data role — that membership, not
     # application code, is what makes agent->human escalation impossible.
     # Dev-only passwords: production injects via secret manager.
@@ -77,7 +77,7 @@ class Settings:
         "postgresql://app_login_auth:auth-pool-secret-dev@localhost:5432/agent_auth",
     )
 
-    # Superuser password: used ONLY by tests to apply app/db/schema.sql.
+    # Superuser password: used ONLY by tests to apply aguard/db/schema.sql.
     # Never referenced by application code — the app only ever holds the two
     # least-privilege pool logins above.
     pg_superuser_password: str = _env("PG_SUPERUSER_PASSWORD", "")

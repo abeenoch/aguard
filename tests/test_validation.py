@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-from app.main import app
-from app.oidc.validation import TokenValidationError, verify_access_token
-from app.settings import settings
+from aguard.main import app
+from aguard.oidc.validation import TokenValidationError, verify_access_token
+from aguard.settings import settings
 
 keys = app.state.keys
 

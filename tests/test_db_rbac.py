@@ -13,8 +13,8 @@ from __future__ import annotations
 import pytest
 import psycopg
 
-from app.db.session import close_pools, scoped_session
-from app.settings import settings
+from aguard.db.session import close_pools, scoped_session
+from aguard.settings import settings
 
 ALICE = "usr_alice"
 BOB = "usr_bob"
@@ -47,7 +47,7 @@ def _seed_rows() -> None:
                             "INSERT INTO documents(owner_sub, title, body) "
                             "VALUES (%s, %s, %s)", (sub, "seed-title", "seed-body"))
     except psycopg.errors.UndefinedTable:
-        pytest.skip("documents table missing — apply app/db/schema.sql first")
+        pytest.skip("documents table missing — apply aguard/db/schema.sql first")
 
 
 def _fetch(kind, sub, sql, params=(), role_override=None):

@@ -77,7 +77,7 @@ So observability ships as **CLI commands + export** (§3.2).
 
 ### 3.1 Authentication pages — *restyle, keep*
 
-`login`, `consent`, `error`, `callback` (currently `app/oidc/pages.py`).
+`login`, `consent`, `error`, `callback` (currently `aguard/oidc/pages.py`).
 
 - **Audience:** every human using any OAuth/OIDC or MCP client. This is the
   highest-traffic user-facing surface the project has.
@@ -130,10 +130,10 @@ be governed by the per-tenant RLS policy that protects `documents`.
 
 | Fact | Evidence |
 |---|---|
-| Four Postgres roles exist: `app_login_human`, `app_login_agent` (LOGIN), `app_user`, `agent_readonly` (NOLOGIN) | `app/db/schema.sql` `CREATE ROLE` |
+| Four Postgres roles exist: `app_login_human`, `app_login_agent` (LOGIN), `app_user`, `agent_readonly` (NOLOGIN) | `aguard/db/schema.sql` `CREATE ROLE` |
 | `human_admin` is **not** a Postgres role | same |
-| `human_admin` appears only as an `app.role` GUC *value* in the `documents_human` RLS policy and as a type hint | `app/db/schema.sql:95,99`; `app/db/session.py:47,57` |
-| No role can ever satisfy that policy branch: `scoped_session(role_override="human_admin")` emits `SET LOCAL ROLE human_admin`, which **fails** (no such role) — and it runs on the human pool, whose login is a member of `app_user` only | `app/db/session.py:56-64` |
+| `human_admin` appears only as an `app.role` GUC *value* in the `documents_human` RLS policy and as a type hint | `aguard/db/schema.sql:95,99`; `aguard/db/session.py:47,57` |
+| No role can ever satisfy that policy branch: `scoped_session(role_override="human_admin")` emits `SET LOCAL ROLE human_admin`, which **fails** (no such role) — and it runs on the human pool, whose login is a member of `app_user` only | `aguard/db/session.py:56-64` |
 
 **Conclusion: operator support is a stub, not a feature.** The RLS policy
 reads as if an admin exists; nothing can reach it. This must be fixed
@@ -220,8 +220,8 @@ These are functional gaps. The activity view is not buildable, or not
 
 ### 5.2 Users and clients are Python constants
 
-- `USERS` is a dict literal in `app/oidc/users.py`; clients come from
-  `seed_registry()` in `app/oidc/clients.py`.
+- `USERS` is a dict literal in `aguard/oidc/users.py`; clients come from
+  `seed_registry()` in `aguard/oidc/clients.py`.
 - They cannot be listed, edited, or rotated without a redeploy — which makes
   any admin UI impossible, and makes a real operator account awkward.
 - **Move to tables** (`app_users`, `oauth_clients`), keeping the current

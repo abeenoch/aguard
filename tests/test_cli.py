@@ -1,35 +1,18 @@
-"""The operator CLI (scripts/agctl.py).
+"""The operator CLI (aguard/cli.py, exposed as `agctl`).
 
 The redaction commands are pure and fast; the audit commands read Postgres
 through the same least-privilege session layer the API uses.
-
-The CLI is loaded by path (scripts/ is not a package), which is exactly how a
-user runs it: `python scripts/agctl.py ...`.
 """
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import sys
-from pathlib import Path
 
 import pytest
 
-from app.db.session import close_pools, scoped_session
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_agctl():
-    spec = importlib.util.spec_from_file_location("agctl",
-                                                  ROOT / "scripts" / "agctl.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)          # type: ignore[union-attr]
-    return module
-
-
-agctl = _load_agctl()
+from aguard import cli as agctl
+from aguard.db.session import close_pools, scoped_session
 
 
 def _run(argv, monkeypatch, stdin_text=None):
@@ -92,7 +75,7 @@ def _schema():
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM agent_audit LIMIT 1")
     except Exception:                                    # pragma: no cover
-        pytest.skip("agent_audit missing — apply app/db/schema.sql first")
+        pytest.skip("agent_audit missing — apply aguard/db/schema.sql first")
     yield
     close_pools()
 

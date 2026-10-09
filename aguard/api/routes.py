@@ -17,8 +17,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.api.deps import Principal, require_principal, require_scope
-from app.db.session import scoped_session
+from aguard.api.deps import Principal, require_principal, require_scope
+from aguard.db.session import scoped_session
 
 logger = logging.getLogger("a-guard.api")
 
@@ -98,8 +98,8 @@ def _audit(cur, principal: Principal, request_id: str,
            statement: str, rows_returned: int) -> None:
     """Audit rows are log records too — statement text passes through the
     SAME redactor so a WHERE email='...' can never land raw in agent_audit."""
-    from app.redact.redactor import redact_event
-    from app.settings import settings
+    from aguard.redact.redactor import redact_event
+    from aguard.settings import settings
     clean = redact_event({"statement": statement}, settings.log_pepper)
     cur.execute(
         "INSERT INTO agent_audit(subject, client_id, request_id, statement,"

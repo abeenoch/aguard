@@ -15,10 +15,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
 
-from app.oidc.clients import Client, ClientRegistry
-from app.oidc.refresh import RefreshTokenStore
-from app.oidc.users import USERS
-from app.oidc.validation import TokenValidationError, verify_access_token
+from aguard.oidc.clients import Client, ClientRegistry
+from aguard.oidc.refresh import RefreshTokenStore
+from aguard.oidc.users import USERS
+from aguard.oidc.validation import TokenValidationError, verify_access_token
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ def _client_auth(request: Request, registry: ClientRegistry,
                   client_id: str | None, client_secret: str | None
                   ) -> tuple[Client | None, JSONResponse | None]:
     """Same rules as the token endpoint: registered method only, or public."""
-    from app.oidc.routes_token import _authenticate_client
+    from aguard.oidc.routes_token import _authenticate_client
     return _authenticate_client(request, registry, client_id, client_secret)
 
 

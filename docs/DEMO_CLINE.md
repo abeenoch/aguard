@@ -25,7 +25,7 @@ Both are addressed (see below). Run the preflight to confirm.
 ```bash
 cp .env.example .env                 # fill in PG_SUPERUSER_PASSWORD
 createdb agent_auth
-psql -U postgres -d agent_auth -f app/db/schema.sql
+psql -U postgres -d agent_auth -f aguard/db/schema.sql
 ```
 
 Seed at least one document for `alice` (the consent flow logs in as her).
@@ -48,7 +48,7 @@ even when a scheme is allowlisted.
 ## 3. Start the server
 
 ```bash
-uvicorn app.main:app --port 8000
+uvicorn aguard.main:app --port 8000
 ```
 
 ## 4. Preflight — do not record until this is 9/9

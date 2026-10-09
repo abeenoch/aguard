@@ -20,12 +20,12 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from app.oidc.clients import Client, ClientRegistry
-from app.oidc.codes import AuthCodeStore
-from app.oidc.pages import consent_form, error_page, login_form
-from app.oidc.session import create_session_token, parse_session_token
-from app.oidc.users import USERS, find_by_email, verify_password
-from app.settings import settings
+from aguard.oidc.clients import Client, ClientRegistry
+from aguard.oidc.codes import AuthCodeStore
+from aguard.oidc.pages import consent_form, error_page, login_form
+from aguard.oidc.session import create_session_token, parse_session_token
+from aguard.oidc.users import USERS, find_by_email, verify_password
+from aguard.settings import settings
 
 router = APIRouter()
 
@@ -266,7 +266,7 @@ def login(
         # wrong-password timing, so the login form can't enumerate accounts.
         # (NOTE: the `next` route param shadows builtin next() here — index
         # into a list instead, or the sandbox reveals exactly this bug.)
-        from app.oidc.users import USERS as _all
+        from aguard.oidc.users import USERS as _all
         verify_password(list(_all.values())[0], password)
         ok = False
     else:
@@ -362,7 +362,7 @@ def demo_callback(
 ) -> HTMLResponse:
     """Registered redirect URI — renders what the client received so the
     whole flow is inspectable in a browser."""
-    from app.oidc.pages import callback_page
+    from aguard.oidc.pages import callback_page
     return HTMLResponse(callback_page(
         code=code, state=state, error=error, error_description=error_description
     ))

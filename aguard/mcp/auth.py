@@ -18,10 +18,10 @@ from __future__ import annotations
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
-from app.mcp.principal import Principal
-from app.oidc.keys import KeyManager
-from app.oidc.validation import TokenValidationError, verify_access_token
-from app.settings import settings
+from aguard.mcp.principal import Principal
+from aguard.oidc.keys import KeyManager
+from aguard.oidc.validation import TokenValidationError, verify_access_token
+from aguard.settings import settings
 
 
 class AGuardTokenVerifier(TokenVerifier):

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.settings import settings
+from aguard.settings import settings
 
 router = APIRouter()
 

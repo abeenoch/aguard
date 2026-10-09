@@ -32,13 +32,13 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse, Response
 
-from app.oidc.clients import Client, ClientRegistry
-from app.oidc.codes import AuthCodeStore, CodeError, CodeReplayError
-from app.oidc.keys import KeyManager
-from app.oidc.pkce import verify_challenge
-from app.oidc.refresh import RefreshError, RefreshReuseError, RefreshTokenStore
-from app.oidc.users import USERS
-from app.settings import settings
+from aguard.oidc.clients import Client, ClientRegistry
+from aguard.oidc.codes import AuthCodeStore, CodeError, CodeReplayError
+from aguard.oidc.keys import KeyManager
+from aguard.oidc.pkce import verify_challenge
+from aguard.oidc.refresh import RefreshError, RefreshReuseError, RefreshTokenStore
+from aguard.oidc.users import USERS
+from aguard.settings import settings
 
 router = APIRouter()
 

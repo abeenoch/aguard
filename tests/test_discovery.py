@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.settings import settings
+from aguard.main import app
+from aguard.settings import settings
 
 client = TestClient(app)
 

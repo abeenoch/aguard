@@ -12,17 +12,17 @@ backend is an explicit, documented decision rather than an incidental one.
 """
 from __future__ import annotations
 
-from app.oidc.codes import (
+from aguard.oidc.codes import (
     AuthCodeStore,
     InMemoryAuthCodeStore,
     PostgresAuthCodeStore,
 )
-from app.oidc.refresh import (
+from aguard.oidc.refresh import (
     InMemoryRefreshTokenStore,
     PostgresRefreshTokenStore,
     RefreshTokenStore,
 )
-from app.settings import settings
+from aguard.settings import settings
 
 MEMORY = "memory"
 POSTGRES = "postgres"

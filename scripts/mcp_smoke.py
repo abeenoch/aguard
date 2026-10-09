@@ -9,7 +9,7 @@ This is the end-to-end proof, using the same client library MCP hosts
   4. human delete     -> allowed for its OWN row
   5. audience binding -> a token minted for /api is rejected at /mcp
 
-Run the server first:  uvicorn app.main:app --port 8000
+Run the server first:  uvicorn aguard.main:app --port 8000
 Then:                  python scripts/mcp_smoke.py
 """
 from __future__ import annotations

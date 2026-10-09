@@ -35,7 +35,7 @@ jobs:
       - name: Apply database schema
         env:
           PGPASSWORD: ci-superuser-secret
-        run: psql -h localhost -U postgres -d agent_auth -f app/db/schema.sql
+        run: psql -h localhost -U postgres -d agent_auth -f aguard/db/schema.sql
 
       - name: Run tests
         env:
@@ -45,3 +45,11 @@ jobs:
           SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-session-secret-not-for-prod' }}
           LOG_HASH_PEPPER: ci-pepper-not-for-prod
         run: pytest -q
+
+      # A missing data file only surfaces AFTER install (agctl init would fail
+      # for a user), so the wheel is verified here rather than discovered later.
+      - name: Build and verify the distribution
+        run: |
+          python -m build --wheel --outdir dist
+          python -c "import zipfile,glob;z=zipfile.ZipFile(glob.glob('dist/*.whl')[0]);n=z.namelist();assert any(p.endswith('db/schema.sql') for p in n),'schema.sql missing from wheel';assert any(p.endswith('entry_points.txt') for p in n),'entry point missing';print('wheel ok')"
+

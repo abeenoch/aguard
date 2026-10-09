@@ -5,7 +5,7 @@
 Please **do not open a public issue** for security vulnerabilities.
 
 Email: **funboy.ea@gmail.com** with:
-- what you found, and the affected component (`app/oidc/`, `app/redact/`, `app/db/`, …)
+- what you found, and the affected component (`aguard/oidc/`, `aguard/redact/`, `aguard/db/`, …)
 - reproduction steps or a proof of concept
 - impact assessment if you have one
 
@@ -36,7 +36,7 @@ Pre-1.0: the latest `main` branch only.
 ## Scope notes
 
 - Demo credentials (`alice@example.com` / `correct-horse-battery`, client
-  secrets in `app/oidc/clients.py`) are **development fixtures**, publicly
+  secrets in `aguard/oidc/clients.py`) are **development fixtures**, publicly
   visible by design — like `admin/admin` on a router. Overriding them is
   required for shared deployments; the startup warning tells you when you
   haven't.

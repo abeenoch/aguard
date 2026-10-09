@@ -3,14 +3,14 @@ name = "a-guard"
 version = "0.1.0"
 description = "The security layer for AI agents: OIDC identity, PII-redacting logs, and database-enforced permissions"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "abeenoch" }]
 requires-python = ">=3.11"
 keywords = ["oauth2", "oidc", "ai-agents", "pii-redaction", "security", "mcp", "rbac"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Topic :: Security",
     "Topic :: Internet :: WWW/HTTP :: Session",
@@ -27,10 +27,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx"]
+dev = ["pytest", "httpx", "build", "twine"]
+
+[project.scripts]
+agctl = "aguard.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/abeenoch/a-guard"
+Repository = "https://github.com/abeenoch/A-guard"
 Issues = "https://github.com/abeenoch/a-guard/issues"
 
 [build-system]
@@ -38,7 +42,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["aguard*"]
+
+[tool.setuptools.package-data]
+# The DB schema must ship INSIDE the wheel: `agctl init` applies it, and an
+# installed package has no source checkout to read it from. The key MUST be
+# quoted — unquoted, TOML reads `aguard.db` as a nested table.
+"aguard.db" = ["*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

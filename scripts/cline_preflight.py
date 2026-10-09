@@ -12,7 +12,7 @@ This script replays Cline's request sequence against a RUNNING server and
 prints PASS/FAIL per gate with the exact server error, so you know what to fix
 before recording.
 
-Run the server first:  uvicorn app.main:app --port 8000
+Run the server first:  uvicorn aguard.main:app --port 8000
 Then:                  python scripts/cline_preflight.py
 """
 from __future__ import annotations

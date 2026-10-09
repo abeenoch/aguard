@@ -25,11 +25,11 @@ import uuid
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
 
-from app.db.session import scoped_session
-from app.mcp.auth import AGuardTokenVerifier, current_principal
-from app.mcp.principal import Principal
-from app.oidc.keys import KeyManager
-from app.settings import settings
+from aguard.db.session import scoped_session
+from aguard.mcp.auth import AGuardTokenVerifier, current_principal
+from aguard.mcp.principal import Principal
+from aguard.oidc.keys import KeyManager
+from aguard.settings import settings
 
 logger = logging.getLogger("a-guard.mcp")
 
@@ -49,7 +49,7 @@ def _kind(principal: Principal) -> str:
 def _redacted_statement(text: str) -> str:
     """Audit rows are log records too — run statement text through the SAME
     redactor so a `WHERE email='...'` can never land raw in agent_audit."""
-    from app.redact.redactor import redact_event
+    from aguard.redact.redactor import redact_event
     return str(redact_event({"statement": text}, settings.log_pepper)["statement"])
 
 

@@ -7,10 +7,10 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.oidc.pkce import challenge_s256, generate_verifier
-from app.oidc.validation import verify_access_token
-from app.settings import settings
+from aguard.main import app
+from aguard.oidc.pkce import challenge_s256, generate_verifier
+from aguard.oidc.validation import verify_access_token
+from aguard.settings import settings
 
 client = TestClient(app)
 REDIRECT = "http://localhost:8000/demo/callback"
@@ -166,7 +166,7 @@ def test_resource_param_binds_audience():
     assert claims["aud"] == MCP_RESOURCE
     # and the API's own audience check correctly REJECTS an MCP-bound token:
     # cross-API replay protection is the whole point of aud binding
-    from app.oidc.validation import TokenValidationError
+    from aguard.oidc.validation import TokenValidationError
     try:
         verify_access_token(r.json()["access_token"], keys=app.state.keys)
         raise AssertionError("MCP-aud token accepted by API audience")

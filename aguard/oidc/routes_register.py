@@ -25,8 +25,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app.oidc.clients import Client, ClientRegistry, hash_secret
-from app.settings import settings
+from aguard.oidc.clients import Client, ClientRegistry, hash_secret
+from aguard.settings import settings
 
 router = APIRouter()
 

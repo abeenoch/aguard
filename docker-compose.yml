@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?set PGPASSWORD in .env — cp .env.example .env}
     volumes:
       # Applied on first boot only (empty volume) — role + RLS setup
-      - ./app/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - ./aguard/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       # -h localhost forces a TCP check. During initdb the temporary server

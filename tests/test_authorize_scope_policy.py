@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.oidc.pkce import challenge_s256, generate_verifier
+from aguard.main import app
+from aguard.oidc.pkce import challenge_s256, generate_verifier
 
 client = TestClient(app)
 REDIRECT = "http://localhost:8000/demo/callback"

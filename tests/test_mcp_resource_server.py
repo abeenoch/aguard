@@ -24,12 +24,12 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.session import close_pools, scoped_session
-from app.oidc.pkce import challenge_s256, generate_verifier
-from app.settings import settings
+from aguard.db.session import close_pools, scoped_session
+from aguard.oidc.pkce import challenge_s256, generate_verifier
+from aguard.settings import settings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = PROJECT_ROOT / "app" / "db" / "schema.sql"
+SCHEMA = PROJECT_ROOT / "aguard" / "db" / "schema.sql"
 REDIRECT = "http://localhost:8000/demo/callback"
 BASE = "http://localhost:8000"          # Host must pass the MCP host allowlist
 MCP_RESOURCE = settings.mcp_resource_id
@@ -61,9 +61,9 @@ def mcp_client():
     lifespan, which starts the MCP Streamable HTTP session-manager task group
     (without it every /mcp POST raises 'Task group is not initialized')."""
     _apply_schema()
-    import app.main as main_module
+    import aguard.main as main_module
     importlib.reload(main_module)
-    from app.main import app
+    from aguard.main import app
     with TestClient(app, base_url=BASE) as tc:
         yield tc
     close_pools()

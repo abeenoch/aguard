@@ -12,9 +12,9 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.oidc import routes_register
-from app.oidc.routes_register import _validate_redirect_uri
+from aguard.main import app
+from aguard.oidc import routes_register
+from aguard.oidc.routes_register import _validate_redirect_uri
 
 client = TestClient(app)
 

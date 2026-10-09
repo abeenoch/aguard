@@ -17,7 +17,7 @@ import hashlib
 import hmac
 import time
 
-from app.settings import settings
+from aguard.settings import settings
 
 
 def _mac(secret: bytes, payload: str) -> str:

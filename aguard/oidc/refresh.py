@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.settings import settings
+from aguard.settings import settings
 
 
 class RefreshError(Exception):
@@ -62,7 +62,7 @@ def _hash(token: str) -> str:
 
 
 class RefreshTokenStore(Protocol):
-    """Storage contract for refresh tokens (see app/oidc/stores.py)."""
+    """Storage contract for refresh tokens (see aguard/oidc/stores.py)."""
 
     def issue(self, *, client_id: str, subject: str, scope: str,
               family_id: str | None = None) -> tuple[str, RefreshRecord]: ...
@@ -198,7 +198,7 @@ class PostgresRefreshTokenStore:
 
     def issue(self, *, client_id: str, subject: str, scope: str,
               family_id: str | None = None) -> tuple[str, RefreshRecord]:
-        from app.db.session import service_session
+        from aguard.db.session import service_session
         now = int(time.time())
         raw = secrets.token_urlsafe(48)
         record = RefreshRecord(
@@ -213,7 +213,7 @@ class PostgresRefreshTokenStore:
         return raw, record
 
     def rotate(self, raw: str, *, client_id: str) -> tuple[str, RefreshRecord]:
-        from app.db.session import service_session
+        from aguard.db.session import service_session
         now = int(time.time())
         reuse_family: str | None = None
         result: tuple[str, RefreshRecord] | None = None
@@ -257,7 +257,7 @@ class PostgresRefreshTokenStore:
         return result
 
     def revoke_by_raw(self, raw: str) -> bool:
-        from app.db.session import service_session
+        from aguard.db.session import service_session
         if not raw:
             return False
         with service_session() as conn:
@@ -272,7 +272,7 @@ class PostgresRefreshTokenStore:
                 return True
 
     def peek(self, raw: str) -> RefreshRecord | None:
-        from app.db.session import service_session
+        from aguard.db.session import service_session
         if not raw:
             return None
         with service_session() as conn:

@@ -13,8 +13,8 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
-from app.oidc.keys import KeyManager
-from app.oidc.validation import TokenValidationError, verify_access_token
+from aguard.oidc.keys import KeyManager
+from aguard.oidc.validation import TokenValidationError, verify_access_token
 
 
 @dataclass(frozen=True)

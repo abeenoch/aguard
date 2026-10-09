@@ -27,8 +27,8 @@ import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
 from jwt import PyJWKError  # noqa: F401  (kept for clarity of failure modes)
 
-from app.oidc.keys import ALGORITHM, KeyManager
-from app.settings import settings
+from aguard.oidc.keys import ALGORITHM, KeyManager
+from aguard.settings import settings
 
 
 class TokenValidationError(Exception):

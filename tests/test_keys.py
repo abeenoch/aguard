@@ -8,7 +8,7 @@ import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.oidc.keys import KeyManager, jwk_thumbprint
+from aguard.oidc.keys import KeyManager, jwk_thumbprint
 
 
 def _b64u_dec(value: str) -> bytes:

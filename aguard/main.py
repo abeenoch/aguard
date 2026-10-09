@@ -14,18 +14,18 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import router as api_router
-from app.mcp.server import build_mcp
-from app.oidc.clients import seed_registry
-from app.oidc.keys import KeyManager
-from app.oidc.metadata import router as metadata_router
-from app.oidc.routes_auth import router as auth_router
-from app.oidc.routes_register import router as register_router
-from app.oidc.routes_revocable import router as revocable_router
-from app.oidc.routes_token import router as token_router
-from app.oidc.stores import build_stores
-from app.redact.logging import install as install_redaction
-from app.settings import settings
+from aguard.api.routes import router as api_router
+from aguard.mcp.server import build_mcp
+from aguard.oidc.clients import seed_registry
+from aguard.oidc.keys import KeyManager
+from aguard.oidc.metadata import router as metadata_router
+from aguard.oidc.routes_auth import router as auth_router
+from aguard.oidc.routes_register import router as register_router
+from aguard.oidc.routes_revocable import router as revocable_router
+from aguard.oidc.routes_token import router as token_router
+from aguard.oidc.stores import build_stores
+from aguard.redact.logging import install as install_redaction
+from aguard.settings import settings
 
 
 def _warn_if_dev_secrets() -> None:
@@ -70,7 +70,7 @@ def create_app() -> FastAPI:
     application.state.keys = keys
     application.state.registry = seed_registry()
     # Backend chosen by STORE_BACKEND: memory (single process) or postgres
-    # (shared + restart-durable). See app/oidc/stores.py for why this is a
+    # (shared + restart-durable). See aguard/oidc/stores.py for why this is a
     # security decision, not just an operational one.
     codes, refresh = build_stores()
     application.state.codes = codes
@@ -79,7 +79,7 @@ def create_app() -> FastAPI:
     # PII-redacting choke point: handler-level filters for every record the
     # app emits, PLUS uvicorn's own handlers (access log lines carry URLs).
     install_redaction("", settings.log_pepper)
-    from app.redact.logging import wire_uvicorn
+    from aguard.redact.logging import wire_uvicorn
     wire_uvicorn(settings.log_pepper)
 
     _warn_if_dev_secrets()

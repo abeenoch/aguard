@@ -6,7 +6,7 @@
 --   CAPABILITY  (read or write?)   -> GRANTs on two DATA roles below
 --   VISIBILITY  (whose rows?)      -> RLS policies keyed on app.sub
 --
--- Run as:  psql -U postgres -d agent_auth -f app/db/schema.sql
+-- Run as:  psql -U postgres -d agent_auth -f aguard/db/schema.sql
 -- Idempotent: safe to re-run (CREATE IF NOT EXISTS / DROP IF EXISTS).
 -- =====================================================================
 

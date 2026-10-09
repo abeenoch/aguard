@@ -12,7 +12,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from app.redact.patterns import (
+from aguard.redact.patterns import (
     CARD_KEY_RE,
     EMAIL_KEY_RE,
     NAME_KEY_RE,

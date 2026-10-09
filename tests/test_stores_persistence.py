@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.session import close_pools, service_session
-from app.oidc.codes import (
+from aguard.db.session import close_pools, service_session
+from aguard.oidc.codes import (
     CodeError,
     CodeReplayError,
     InMemoryAuthCodeStore,
     PostgresAuthCodeStore,
 )
-from app.oidc.refresh import (
+from aguard.oidc.refresh import (
     InMemoryRefreshTokenStore,
     PostgresRefreshTokenStore,
     RefreshError,
@@ -41,7 +41,7 @@ def _postgres_ready() -> bool:
 
 def _require_postgres() -> None:
     if not _postgres_ready():
-        pytest.skip("token tables missing — apply app/db/schema.sql")
+        pytest.skip("token tables missing — apply aguard/db/schema.sql")
 
 
 def _clear_tables() -> None:

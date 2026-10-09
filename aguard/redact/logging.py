@@ -22,8 +22,8 @@ import logging
 import re
 from typing import Any
 
-from app.redact.patterns import redact_text
-from app.redact.redactor import redact_event
+from aguard.redact.patterns import redact_text
+from aguard.redact.redactor import redact_event
 
 _marker = object()   # per-handler idempotency sentinel
 _FACTORY_FLAG = "_pii_factory_installed"
@@ -139,7 +139,7 @@ def _redact_format(fmt: str, pepper: bytes) -> str:
 
 
 def _redact_message(message: str, pepper: bytes) -> str:
-    from app.redact.patterns import redact_text
+    from aguard.redact.patterns import redact_text
     return redact_text(message, pepper)
 
 

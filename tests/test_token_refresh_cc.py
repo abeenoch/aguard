@@ -1,7 +1,7 @@
 """Refresh rotation, family revocation, and client_credentials tests."""
 from __future__ import annotations
 
-from app.oidc.validation import verify_access_token
+from aguard.oidc.validation import verify_access_token
 from tests.test_token_grants import REGISTERED_REDIRECT, _basic, _exchange, _obtain_code, app
 
 

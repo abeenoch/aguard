@@ -21,16 +21,16 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.session import close_pools
-from app.oidc.pkce import challenge_s256, generate_verifier
+from aguard.db.session import close_pools
+from aguard.oidc.pkce import challenge_s256, generate_verifier
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = PROJECT_ROOT / "app" / "db" / "schema.sql"
+SCHEMA = PROJECT_ROOT / "aguard" / "db" / "schema.sql"
 REDIRECT = "http://localhost:8000/demo/callback"
 
 
 def _apply_schema() -> None:
-    from app.settings import settings
+    from aguard.settings import settings
     if not settings.pg_superuser_password:
         raise RuntimeError(
             "PG_SUPERUSER_PASSWORD not set — copy .env.example to .env "
@@ -48,9 +48,9 @@ def _apply_schema() -> None:
 @pytest.fixture(scope="module")
 def api_client():
     _apply_schema()
-    import app.main as main_module
+    import aguard.main as main_module
     importlib.reload(main_module)          # fresh stores + redaction installed
-    from app.main import app
+    from aguard.main import app
     with TestClient(app) as tc:
         yield tc
     close_pools()
@@ -157,7 +157,7 @@ def test_prompt_injection_delete_dies_at_database(api_client):
     """The money test: SQL shaped like a prompt-injection payload goes to the
     agent's session — and Postgres, not application code, says no."""
     import psycopg
-    from app.db.session import scoped_session
+    from aguard.db.session import scoped_session
     payload_title = "x'); DELETE FROM documents; --"
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with scoped_session(kind="agent", sub="usr_alice") as conn:

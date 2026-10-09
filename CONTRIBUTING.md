@@ -25,14 +25,14 @@ git clone https://github.com/abeenoch/a-guard && cd a-guard
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env    # fill in PGPASSWORD (tests apply schema.sql)
-createdb agent_auth && psql -d agent_auth -f app/db/schema.sql
+createdb agent_auth && psql -d agent_auth -f aguard/db/schema.sql
 pytest                   # must be green before you start
 ```
 
 Live server + smoke test:
 
 ```bash
-uvicorn app.main:app --port 8000     # terminal 1
+uvicorn aguard.main:app --port 8000     # terminal 1
 python scripts/smoke.py              # terminal 2
 ```
 
@@ -46,12 +46,12 @@ python scripts/smoke.py              # terminal 2
 
 ## Architecture notes for newcomers
 
-- **Auth flow**: `app/oidc/` — start with `routes_auth.py` (authorize) then
+- **Auth flow**: `aguard/oidc/` — start with `routes_auth.py` (authorize) then
   `routes_token.py` (exchange). Validation checklist: `validation.py`.
-- **Redaction**: `app/redact/patterns.py` (content) → `redactor.py`
+- **Redaction**: `aguard/redact/patterns.py` (content) → `redactor.py`
   (structure) → `logging.py` (choke point — read the module docstrings;
   the Phase 1 live-server lesson is documented there).
-- **DB enforcement**: `app/db/schema.sql` (roles/RLS/grants, idempotent)
+- **DB enforcement**: `aguard/db/schema.sql` (roles/RLS/grants, idempotent)
   → `session.py` (`SET LOCAL` scoped sessions). The invariant: each login
   role is a member of exactly one data role.
 

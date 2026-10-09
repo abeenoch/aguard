@@ -25,9 +25,9 @@ agent might talk its way around.
 
 | Layer | What it does | Where |
 |---|---|---|
-| 🔐 **OIDC provider** | Hand-rolled OAuth 2.1/OIDC: authorization code + **PKCE S256 only**, short-lived JWTs, **rotating refresh tokens with family revocation**, `client_credentials` for machine principals | `app/oidc/` |
-| 🔪 **PII redaction** | Every log record is scrubbed **at creation time** — emails become correlatable `email[h:…]` hashes, cards become `****-****-****-1111`, secrets `[REDACTED]`. Fail-closed: un-scrubable records become `[LOG_DROPPED]`, never raw | `app/redact/` |
-| 🗄️ **DB enforcement** | Two login roles → two data roles → Postgres `GRANT`s + **Row-Level Security**. Agents get `SELECT` on their own tenant's rows, **period** — the database refuses writes itself | `app/db/` |
+| 🔐 **OIDC provider** | Hand-rolled OAuth 2.1/OIDC: authorization code + **PKCE S256 only**, short-lived JWTs, **rotating refresh tokens with family revocation**, `client_credentials` for machine principals | `aguard/oidc/` |
+| 🔪 **PII redaction** | Every log record is scrubbed **at creation time** — emails become correlatable `email[h:…]` hashes, cards become `****-****-****-1111`, secrets `[REDACTED]`. Fail-closed: un-scrubable records become `[LOG_DROPPED]`, never raw | `aguard/redact/` |
+| 🗄️ **DB enforcement** | Two login roles → two data roles → Postgres `GRANT`s + **Row-Level Security**. Agents get `SELECT` on their own tenant's rows, **period** — the database refuses writes itself | `aguard/db/` |
 
 The three layers are independent: use one, two, or all three.
 
@@ -44,7 +44,7 @@ pip install -e ".[dev]"
 #   (Run without --pg-password to just generate .env, then fill it in.)
 python scripts/agctl.py init --pg-password <your-postgres-password>
 
-python -m uvicorn app.main:app --port 8000
+python -m uvicorn aguard.main:app --port 8000
 ```
 
 Expected tail of `init`:
@@ -65,7 +65,7 @@ Expected tail of `init`:
 ```bash
 cp .env.example .env         # then set PG_SUPERUSER_PASSWORD / SESSION_SECRET / LOG_HASH_PEPPER
 createdb agent_auth
-psql -U postgres -d agent_auth -f app/db/schema.sql
+psql -U postgres -d agent_auth -f aguard/db/schema.sql
 ```
 </details>
 
@@ -212,7 +212,7 @@ Full walkthrough, recording beats and post-run evidence:
 ### Prove it
 
 ```bash
-uvicorn app.main:app --port 8000          # terminal 1
+uvicorn aguard.main:app --port 8000          # terminal 1
 python scripts/mcp_smoke.py               # terminal 2 — real MCP client SDK
 pytest tests/test_mcp_resource_server.py  # 10 tests, in-process, no network
 ```
@@ -245,6 +245,43 @@ a real run:
    id  ts                    subject       client       rows  statement
     9  2026-10-09 22:04:08   usr_alice     demo-spa        1  MCP delete_document id=7
     8  2026-10-09 22:04:07   usr_alice     chat-agent      0  MCP delete_document id=7
+```
+
+## Protect your own MCP server
+
+The other half of the product: your server accepts a-guard-issued tokens
+**without holding a signing key**. `ResourceServerGuard` fetches the issuer's
+JWKS, caches it, re-resolves on key rotation, and enforces the four checks that
+matter — signature, `iss`, **`aud`** (RFC 8707), and expiry:
+
+```python
+from fastapi import Depends, FastAPI, Request
+from aguard.resource_server import ResourceServerGuard
+
+guard = ResourceServerGuard(
+    issuer="http://localhost:8000",        # the AS — ours, or anyone's
+    audience="http://localhost:9000/mcp",  # THIS resource, and nothing else
+)
+
+app = FastAPI()
+
+@app.post("/mcp")
+def mcp(request: Request, claims: dict = Depends(guard.dependency())):
+    return {"sub": claims["sub"]}          # identity that survived verification
+```
+
+That `audience` argument is the whole point: a token minted for another service
+— even a perfectly signed one — is refused here, and vice versa.
+
+Unverified requests get a `401` carrying
+`WWW-Authenticate: Bearer resource_metadata="…"`, which is how an MCP client
+*discovers* the authorization server rather than being configured with it.
+
+Runnable example: [`examples/protect_mcp_server.py`](examples/protect_mcp_server.py).
+
+```bash
+python -m build                 # distribution metadata lives in pyproject.toml
+agctl --help                    # console script (see docs/RELEASING.md)
 ```
 
 ## Status

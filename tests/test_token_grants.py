@@ -10,9 +10,9 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.oidc.pkce import challenge_s256, generate_verifier
-from app.oidc.validation import TokenValidationError, verify_access_token
+from aguard.main import app
+from aguard.oidc.pkce import challenge_s256, generate_verifier
+from aguard.oidc.validation import TokenValidationError, verify_access_token
 
 client = TestClient(app)
 
@@ -93,7 +93,7 @@ def test_code_exchange_happy_path():
     assert "id_token" in body
 
     claims = verify_access_token(body["access_token"], keys=app.state.keys)
-    from app.settings import settings
+    from aguard.settings import settings
     assert claims["sub"] == "usr_alice"
     assert claims["iss"] == settings.issuer          # exact issuer match
     assert claims["aud"] == settings.resource_audience  # audience-restricted
