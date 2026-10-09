@@ -25,5 +25,10 @@ for _name, _value in {
     "RATE_LIMIT_LOGIN": "1000000",
     "RATE_LIMIT_LOGIN_ACCOUNT": "1000000",
     "RATE_LIMIT_REGISTER": "1000000",
+    # /readyz reuses its result for a second by default. Tests assert on
+    # individual probes, so a cached answer from an earlier test would make
+    # them order-dependent — disable the cache here and cover it explicitly in
+    # tests/test_rate_limit.py (test_readyz_reuses_its_result_briefly).
+    "READYZ_CACHE_SECONDS": "0",
 }.items():
     os.environ.setdefault(_name, _value)

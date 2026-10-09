@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
+from aguard.oidc.claims import roles_from_claims
 from aguard.oidc.keys import KeyManager
 from aguard.oidc.validation import TokenValidationError, verify_access_token
 
@@ -39,10 +40,11 @@ def require_principal(request: Request) -> Principal:
     except TokenValidationError as exc:
         raise HTTPException(status_code=401,
                             detail=f"invalid token: {exc}") from None
-    roles = claims.get("roles", ["human"])
+    # Capability class from the claim, failing SAFE when it is absent (see
+    # aguard/oidc/claims.py) — a missing `roles` must not mean "human".
     return Principal(
         sub=claims["sub"],
-        roles=frozenset(roles if isinstance(roles, list) else [roles]),
+        roles=roles_from_claims(claims),
         scopes=frozenset(str(claims.get("scope", "")).split()),
         client_id=str(claims.get("client_id", "")),
         jti=str(claims.get("jti", "")),

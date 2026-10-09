@@ -298,7 +298,11 @@ def login(
         create_session_token(user.sub),
         httponly=True,     # JS can never read the session — no XSS exfil path
         samesite="lax",    # blocks cross-site POST carry; still works for top-level GETs
-        max_age=8 * 3600,
+        # Never offered over plaintext HTTP: this cookie mints authorization
+        # codes, so an http hop would hand out session hijack. Derived from the
+        # issuer scheme unless explicitly overridden (see settings).
+        secure=settings.session_cookie_is_secure,
+        max_age=settings.session_ttl,
         path="/",
     )
     return resp

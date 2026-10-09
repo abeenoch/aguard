@@ -1,0 +1,25 @@
+# Build context hygiene. The Dockerfile copies explicit paths, so this is
+# defence in depth: if someone ever relaxes it to `COPY . .`, the secrets and
+# runtime state below must not end up baked into a layer.
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+
+# NEVER ship these: .env holds real secrets and data/keys is the signing key.
+.env
+.env.*
+!.env.example
+data/
+
+# Build artifacts and test/doc trees the image does not need.
+dist/
+build/
+bdist*/
+*.egg-info/
+tests/
+docs/
+*.log
+docker-compose.yml

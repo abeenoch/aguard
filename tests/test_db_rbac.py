@@ -140,3 +140,13 @@ def test_session_state_does_not_leak_across_borrowers():
             cur.execute("SELECT current_user, current_setting('app.sub')")
             user, sub = cur.fetchone()
     assert (user, sub) == ("agent_readonly", BOB)
+
+
+def test_rls_predicate_column_is_indexed():
+    """owner_sub is filtered on for EVERY query against documents, so it must
+    be indexed — otherwise each tenant read scans every tenant's rows and the
+    cost grows with other tenants' data."""
+    rows = _fetch("human", ALICE,
+                  "SELECT indexdef FROM pg_indexes WHERE tablename = 'documents'")
+    definitions = " ".join(r[0] for r in rows)
+    assert "owner_sub" in definitions, f"documents is missing an owner_sub index: {definitions!r}"

@@ -19,6 +19,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from aguard.mcp.principal import Principal
+from aguard.oidc.claims import roles_from_claims
 from aguard.oidc.keys import KeyManager
 from aguard.oidc.validation import TokenValidationError, verify_access_token
 from aguard.settings import settings
@@ -37,7 +38,7 @@ class AGuardTokenVerifier(TokenVerifier):
                                          audience=settings.mcp_resource_id)
         except TokenValidationError:
             return None
-        roles = claims.get("roles", ["human"])
+        roles = roles_from_claims(claims)
         return AccessToken(
             token=token,
             client_id=str(claims.get("client_id", "")),
@@ -45,8 +46,9 @@ class AGuardTokenVerifier(TokenVerifier):
             expires_at=int(claims["exp"]),
             resource=str(claims.get("aud", "")),
             subject=claims["sub"],
-            claims={"roles": list(roles) if isinstance(roles, list) else [roles],
-                    "iss": claims["iss"]},
+            # Sorted for determinism; a missing `roles` claim resolved to the
+            # LEAST privileged class, never to "human" (aguard/oidc/claims.py).
+            claims={"roles": sorted(roles), "iss": claims["iss"]},
         )
 
 
@@ -59,10 +61,9 @@ def current_principal() -> Principal:
     token = get_access_token()
     if token is None or token.subject is None:
         raise RuntimeError("no authenticated principal — refusing to run")
-    roles = (token.claims or {}).get("roles", ["human"])
     return Principal(
         sub=token.subject,
-        roles=frozenset(roles if isinstance(roles, list) else [roles]),
+        roles=roles_from_claims(token.claims),
         scopes=frozenset(token.scopes or []),
         client_id=token.client_id,
     )

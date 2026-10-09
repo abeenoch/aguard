@@ -358,3 +358,50 @@ def test_readyz_fails_while_liveness_stays_up(monkeypatch):
     assert "refused" not in failed.text
 
 
+def _count_probes(monkeypatch) -> dict[str, int]:
+    """Count how many times readiness actually reaches for the database."""
+    counter = {"n": 0}
+    real = main_module.service_session
+
+    def counting(*args, **kwargs):
+        counter["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(main_module, "service_session", counting)
+    return counter
+
+
+def test_readyz_reuses_its_result_briefly(monkeypatch):
+    """A probe costs a pooled connection and infrastructure polls every few
+    seconds, so repeated probes must not each open one — otherwise /readyz
+    can drain the pool that /token also borrows from."""
+    if not _database_available():
+        pytest.skip("Postgres is not reachable; /readyz checks it by design")
+
+    probes = _count_probes(monkeypatch)
+    monkeypatch.setattr(main_module, "settings",
+                        _settings_with(readyz_cache_seconds=30.0))
+
+    first = client.get("/readyz")
+    second = client.get("/readyz")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert probes["n"] == 1, f"{probes['n']} probes ran; the cache did not engage"
+
+
+def test_readyz_probes_afresh_when_the_cache_is_disabled(monkeypatch):
+    """The suite runs with READYZ_CACHE_SECONDS=0 so one test's probe cannot
+    answer the next test's question; that must actually disable the cache."""
+    if not _database_available():
+        pytest.skip("Postgres is not reachable; /readyz checks it by design")
+
+    probes = _count_probes(monkeypatch)
+    monkeypatch.setattr(main_module, "settings",
+                        _settings_with(readyz_cache_seconds=0.0))
+
+    client.get("/readyz")
+    client.get("/readyz")
+    assert probes["n"] == 2
+
+

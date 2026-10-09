@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 
 import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from aguard.oidc.keys import KeyManager, jwk_thumbprint
+from aguard.oidc.validation import verify_access_token
 
 
 def _b64u_dec(value: str) -> bytes:
@@ -88,22 +90,84 @@ def test_sign_pins_algorithm_header(tmp_path):
     assert header["kid"] == km.active.kid
 
 
-def test_retire_expired_only_drops_unsafe_keys(tmp_path):
+def _retired(km: KeyManager):
+    return [k for k in km.all_keys if k.status == "retired"][0]
+
+
+def test_retire_expired_keeps_a_freshly_retired_key(tmp_path):
     km = KeyManager(tmp_path / "keys")
     km.rotate()
-    old_kid = [k.kid for k in km.all_keys if k.status == "retired"][0]
+    old_kid = _retired(km).kid
 
-    # fresh retired key (created_at = now) must be kept: tokens signed with
-    # it may still be alive
+    # tokens signed moments ago may still be alive: the key must stay
     assert km.retire_expired(max_token_ttl=900) == []
     assert old_kid in {k.kid for k in km.all_keys}
 
-    # pretend max TTL is negative-expired: key older than any possible token
-    import time
-    for k in km.all_keys:
-        if k.kid == old_kid:
-            k.created_at = int(time.time()) - 10_000
+
+def test_retire_expired_measures_the_window_from_retirement(tmp_path):
+    """Regression: measure the grace window from retired_at, not created_at.
+
+    Gating on created_at deleted a long-lived key the instant it was rotated,
+    taking every in-flight token with it ("kid not in JWKS") — the exact outage
+    this class's docstring promises does not happen. Reproduced before the fix.
+    """
+    km = KeyManager(tmp_path / "keys")
+    # a real signing key lives for months, so created_at is ancient...
+    km.active.created_at = int(time.time()) - 30 * 24 * 3600
     km._persist()
-    dropped = km.retire_expired(max_token_ttl=900)
-    assert dropped == [old_kid]
-    assert old_kid not in {k.kid for k in km.all_keys}
+
+    token = km.sign({
+        "iss": "http://localhost:8000", "sub": "usr_alice",
+        "aud": "a-guard-api", "scope": "orders:read", "roles": ["human"],
+        "iat": int(time.time()), "exp": int(time.time()) + 900,
+    })
+    km.rotate()                        # ...and it is retired just now
+
+    assert km.retire_expired(max_token_ttl=900) == []
+
+    # the in-flight token still verifies: its key is still published
+    assert verify_access_token(token, keys=km)["sub"] == "usr_alice"
+
+    # once the grace window has genuinely elapsed, the key goes
+    key = _retired(km)
+    key.retired_at = int(time.time()) - 901
+    km._persist()
+    assert km.retire_expired(max_token_ttl=900) == [key.kid]
+
+
+def test_retired_key_without_a_timestamp_is_never_dropped(tmp_path):
+    """A keystore written before retired_at existed must fail toward KEEPING:
+    an extra key costs JWKS bytes, a key dropped early 401s live traffic."""
+    km = KeyManager(tmp_path / "keys")
+    km.rotate()
+    key = _retired(km)
+    key.retired_at = None
+    key.created_at = int(time.time()) - 10_000     # ancient by creation only
+    km._persist()
+
+    assert km.retire_expired(max_token_ttl=900) == []
+    assert key.kid in {k.kid for k in km.all_keys}
+
+
+def test_startup_prunes_keys_that_can_no_longer_verify_anything(tmp_path):
+    key_dir = tmp_path / "keys"
+    km = KeyManager(key_dir)
+    km.rotate()
+    key = _retired(km)
+    key.retired_at = int(time.time()) - 10_000
+    km._persist()
+
+    reloaded = KeyManager(key_dir, max_token_ttl=900)   # startup housekeeping
+    assert key.kid not in {k.kid for k in reloaded.all_keys}
+    assert len(reloaded.all_keys) == 1
+    assert reloaded.active.status == "active"
+
+
+def test_startup_keeps_keys_that_may_still_be_verifying(tmp_path):
+    key_dir = tmp_path / "keys"
+    km = KeyManager(key_dir)
+    km.rotate()
+    retired_kid = _retired(km).kid
+
+    reloaded = KeyManager(key_dir, max_token_ttl=900)
+    assert retired_kid in {k.kid for k in reloaded.all_keys}

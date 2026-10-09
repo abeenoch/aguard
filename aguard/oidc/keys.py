@@ -58,6 +58,10 @@ class ManagedKey:
     pem: str          # PKCS#8 private key — must never leave keystore/process
     created_at: int
     status: str       # "active" (signs) | "retired" (verify-only, rotation overlap)
+    # When this key stopped signing. The grace window for removal is measured
+    # from HERE, not from created_at: see retire_expired(). None means
+    # "unknown" (a keystore written before this field existed).
+    retired_at: int | None = None
 
     @property
     def private_key(self) -> rsa.RSAPrivateKey:
@@ -78,11 +82,18 @@ class ManagedKey:
 
 
 class KeyManager:
-    def __init__(self, key_dir: Path):
+    def __init__(self, key_dir: Path, *, max_token_ttl: int | None = None):
         self._dir = Path(key_dir)
         self._store = self._dir / "keys.json"
         self._keys: list[ManagedKey] = []
         self._load_or_create()
+        if max_token_ttl is not None:
+            # Startup is the one path that reliably runs, so it is where
+            # housekeeping belongs: a retired key that can no longer be signing
+            # anything live is pruned here, keeping JWKS from growing forever
+            # across rotations. Tests construct without a TTL and therefore
+            # never prune implicitly.
+            self.retire_expired(max_token_ttl=max_token_ttl)
 
     # -- lifecycle -------------------------------------------------------
 
@@ -123,25 +134,45 @@ class KeyManager:
 
         The old key STAYS in the JWKS: every access/id token it signed remains
         verifiable for up to its TTL. Dropping it on rotation = every in-flight
-        token 401s instantly — the rotation outage described above."""
+        token 401s instantly — the rotation outage described above.
+
+        retired_at is stamped as the key stops signing, because that — not
+        created_at — is what the removal grace window must be measured from."""
+        now = int(time.time())
         for key in self._keys:
             if key.status == "active":
                 key.status = "retired"
+                key.retired_at = now
         new_key = self._generate(status="active")
         self._keys.append(new_key)
         self._persist()
         return new_key
 
     def retire_expired(self, max_token_ttl: int) -> list[str]:
-        """Remove retired keys older than the longest token TTL.
+        """Remove retired keys once nothing they signed can still be valid.
 
-        Without this, JWKS grows forever; with premature removal, old tokens
-        break. The guard is simple: a retired key is only droppable once no
-        token signed by it can still be alive."""
-        cutoff = int(time.time()) - max_token_ttl
+        The guard is on the RETIREMENT time, not the creation time. A signing
+        key typically lives for months, so gating on created_at (the
+        obvious-looking version of this check) deletes a key the instant it is
+        rotated — while tokens signed moments earlier are still valid for their
+        full TTL. Reproduced before this was fixed: a 30-day-old key rotated
+        once and then pruned with max_token_ttl=900 took a token that still had
+        15 minutes of life down with it ("kid not in JWKS"), which is precisely
+        the rotation outage this class exists to prevent.
+
+        A key with no retirement timestamp (a keystore written before
+        retired_at existed) is never dropped. Unknown age must fail toward
+        KEEPING the key: an extra key costs some JWKS bytes, whereas a key
+        dropped early 401s live traffic.
+
+        Without this, JWKS grows forever; with it done wrong, old tokens break.
+        """
+        now = int(time.time())
         kept, dropped = [], []
         for key in self._keys:
-            if key.status == "retired" and key.created_at < cutoff:
+            if (key.status == "retired"
+                    and key.retired_at is not None
+                    and key.retired_at + max_token_ttl < now):
                 dropped.append(key.kid)
             else:
                 kept.append(key)

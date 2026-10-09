@@ -92,6 +92,34 @@ class Settings:
         "SESSION_SECRET", "dev-session-secret-change-me"
     ).encode()
 
+    # Browser session lifetime. ONE number: the cookie's Max-Age and the
+    # token's own exp are derived from it, so they cannot drift apart.
+    session_ttl: int = int(_env("SESSION_TTL", str(8 * 3600)))
+
+    # Send the session cookie only over TLS: "auto" (the default) derives it
+    # from the issuer scheme — an https issuer means the browser reaches us
+    # encrypted, so the cookie must never go out in the clear. A dev issuer is
+    # http://localhost, where Secure buys nothing (and would break older
+    # browsers), which is why this is derived rather than a blanket True.
+    # Force "true"/"false" when TLS terminates in front of an http issuer.
+    session_cookie_secure: str = _env(
+        "SESSION_COOKIE_SECURE", "auto"
+    ).strip().lower()
+
+    @property
+    def session_cookie_is_secure(self) -> bool:
+        """Resolve session_cookie_secure against the issuer's scheme.
+
+        An unrecognised value degrades to "auto", never to off: a typo in a
+        config file must not be able to silently downgrade the cookie to
+        plaintext transport.
+        """
+        if self.session_cookie_secure in ("1", "true", "yes", "on"):
+            return True
+        if self.session_cookie_secure in ("0", "false", "no", "off"):
+            return False
+        return self.issuer.startswith("https://")
+
     # Token lifetimes. Short access tokens are the revocation story for
     # self-contained JWTs: worst-case exposure window == TTL.
     access_token_ttl: int = int(_env("ACCESS_TOKEN_TTL", "900"))        # 15 min
@@ -156,6 +184,13 @@ class Settings:
     # Cap on counted identities held in memory: bounds a key-rotation flood.
     # The least recently used bucket is evicted when the cap is reached.
     rate_limit_max_keys: int = int(_env("RATE_LIMIT_MAX_KEYS", "10000"))
+
+    # How long a /readyz result may be reused. Infrastructure polls readiness
+    # every few seconds and each probe costs a pooled database connection; a
+    # short cache stops a probe flood from consuming the pool that /token also
+    # draws from. 0 disables the cache (every probe hits the database), which
+    # is what the test suite uses so probes cannot leak between tests.
+    readyz_cache_seconds: float = float(_env("READYZ_CACHE_SECONDS", "1.0"))
 
     # DCR redirect-URI policy. Default is the strict OAuth 2.1 baseline:
     # https anywhere, http on loopback only (RFC 8252 for native apps).

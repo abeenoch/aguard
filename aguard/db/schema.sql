@@ -90,6 +90,12 @@ CREATE TABLE documents (
   internal_notes text NOT NULL DEFAULT ''  -- NEVER visible to agents
 );
 
+-- The RLS policies below filter on owner_sub for EVERY query against this
+-- table, so that column must be indexed: without it each tenant-scoped read
+-- sequentially scans every tenant's rows, and the cost grows with other
+-- tenants' data. An RLS predicate is a filter, not an optimization.
+CREATE INDEX documents_owner_sub_idx ON documents (owner_sub);
+
 CREATE TABLE agent_audit (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   ts            timestamptz NOT NULL DEFAULT now(),

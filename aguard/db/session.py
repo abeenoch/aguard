@@ -49,7 +49,8 @@ def get_pool(kind: Literal["human", "agent", "auth"]) -> ConnectionPool:
 
 
 @contextmanager
-def service_session(*, statement_timeout_ms: int = 5000):
+def service_session(*, statement_timeout_ms: int = 5000,
+                    acquire_timeout_ms: int | None = None):
     """Authorization-server session: the auth_service role, no tenant subject.
 
     Deliberately NOT scoped_session — the AS is not a tenant, so there is no
@@ -57,9 +58,17 @@ def service_session(*, statement_timeout_ms: int = 5000):
     grants on documents/agent_audit). That asymmetry is the point: a
     compromised AS session cannot read tenant data, and a compromised tenant
     session cannot read or forge token state.
+
+    acquire_timeout_ms bounds the wait for a POOLED connection, which is a
+    different clock from statement_timeout: that one only starts once a
+    connection exists. Without this, a caller asking "is the database up?"
+    while it is down waits out the pool default (~30s) — so a readiness probe
+    that must answer promptly passes a short value here.
     """
     pool = get_pool("auth")
-    with pool.connection() as conn:
+    with pool.connection(
+        timeout=None if acquire_timeout_ms is None else acquire_timeout_ms / 1000
+    ) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT set_config('statement_timeout', %s, true)",
                         (str(statement_timeout_ms),))

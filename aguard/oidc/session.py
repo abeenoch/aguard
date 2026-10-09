@@ -25,8 +25,11 @@ def _mac(secret: bytes, payload: str) -> str:
 
 
 def create_session_token(
-    sub: str, *, ttl: int = 8 * 60 * 60, secret: bytes | None = None
+    sub: str, *, ttl: int | None = None, secret: bytes | None = None
 ) -> str:
+    # Default lifetime comes from settings: routes_auth reads the same setting
+    # for the cookie's Max-Age, so token and cookie cannot drift apart.
+    ttl = settings.session_ttl if ttl is None else ttl
     secret = settings.session_secret if secret is None else secret
     exp = str(int(time.time()) + ttl)
     payload = f"{sub}.{exp}"

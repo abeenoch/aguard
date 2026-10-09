@@ -71,3 +71,44 @@ jobs:
           python -m build --wheel --outdir dist
           python -c "import zipfile,glob;z=zipfile.ZipFile(glob.glob('dist/*.whl')[0]);n=z.namelist();assert any(p.endswith('db/schema.sql') for p in n),'schema.sql missing from wheel';assert any(p.endswith('entry_points.txt') for p in n),'entry point missing';print('wheel ok')"
 
+  # The image and the compose stack are deployment surfaces nothing else
+  # exercises. A wrong install ordering (source copied AFTER the package is
+  # installed) builds green and produces a container that dies on the first
+  # `import aguard`, so building the image is not enough — this job also
+  # proves the package imports and the server serves from inside it.
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t a-guard:ci .
+
+      - name: Smoke-test the image
+        run: |
+          docker run -d --name aguard-smoke -p 8080:8000 a-guard:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          echo "healthz: $(curl -fsS http://127.0.0.1:8080/healthz)"
+
+          # The exact failure this job exists for: the installed artifact must
+          # really contain the package, not just build successfully.
+          docker exec aguard-smoke python -c "import aguard, aguard.main; print('imported', aguard.__file__)"
+
+          # /readyz inspects dependencies, so with no database it must answer
+          # 503. A probe that reported "ok" here would be worse than none.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz)
+          echo "readyz: $code"
+          [ "$code" = "503" ] || { echo "expected 503 without a database, got $code"; exit 1; }
+
+      - name: Container logs
+        if: failure()
+        run: docker logs aguard-smoke
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f aguard-smoke || true
+

@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
+import threading
+import time
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -75,7 +78,14 @@ def _warn_if_limits_are_per_process() -> None:
 
 
 def create_app() -> FastAPI:
-    keys = KeyManager(settings.key_dir)
+    # The keystore prunes retired keys at startup, but only once it knows how
+    # long a token may outlive the key that signed it: the longest JWT TTL we
+    # issue, plus the clock-skew leeway every validator is allowed.
+    keys = KeyManager(
+        settings.key_dir,
+        max_token_ttl=max(settings.access_token_ttl, settings.id_token_ttl)
+        + settings.clock_skew_leeway,
+    )
 
     # MCP resource server. build_mcp() wires the SDK's bearer middleware
     # (RFC 9728 discovery + audience binding); streamable_http_app() returns
@@ -131,20 +141,16 @@ def create_app() -> FastAPI:
         """
         return {"status": "ok"}
 
-    @application.get("/readyz")
-    def readyz() -> JSONResponse:
-        """Readiness: can this process actually serve right now?
+    # Readiness is polled by infrastructure every few seconds and costs a
+    # pooled database connection, so a result is reused for a very short window
+    # (settings.readyz_cache_seconds). Two consequences, both wanted: a probe
+    # flood cannot consume the connection pool that /token also draws from, and
+    # the lock means at most ONE probe holds a connection at a time.
+    _readyz_lock = threading.Lock()
+    _readyz_cache: dict[str, Any] = {"at": -1e18, "status": 200, "body": {}}
 
-        Checks what every shipped data path needs — the signing keystore (so
-        /jwks and token signing work) and the database (/api, the MCP tools
-        and the postgres store backend all read from it). The database check is
-        unconditional because there is no configuration in which this server
-        serves without it; "alive but no database" is not a serving state.
-
-        Failure returns 503 with a generic per-check status. Details go to the
-        log (which is redacted) and never into a response body an
-        unauthenticated caller can read.
-        """
+    def _probe_readiness() -> tuple[int, dict]:
+        """One live check of everything this process needs to serve."""
         checks: dict[str, str] = {}
         healthy = True
 
@@ -158,9 +164,12 @@ def create_app() -> FastAPI:
                 "readiness: keystore unusable")
 
         try:
-            # Short timeout on purpose: a probe must answer promptly even while
-            # the database is hanging, rather than hanging with it.
-            with service_session(statement_timeout_ms=1000) as conn:
+            # Both timeouts are short on purpose: a probe must answer promptly
+            # even while the database is hanging, rather than hanging with it.
+            # acquire_timeout bounds the wait for a pooled connection, which
+            # statement_timeout does not cover.
+            with service_session(statement_timeout_ms=1000,
+                                 acquire_timeout_ms=1500) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     cur.fetchone()
@@ -171,11 +180,38 @@ def create_app() -> FastAPI:
             logging.getLogger("a-guard.startup").exception(
                 "readiness: database unreachable")
 
-        return JSONResponse(
-            {"status": "ready" if healthy else "not_ready", "checks": checks},
-            status_code=200 if healthy else 503,
-            headers={"Cache-Control": "no-store"},
-        )
+        return (200 if healthy else 503,
+                {"status": "ready" if healthy else "not_ready",
+                 "checks": checks})
+
+    @application.get("/readyz")
+    def readyz() -> JSONResponse:
+        """Readiness: can this process actually serve right now?
+
+        Checks what every shipped data path needs — the signing keystore (so
+        /jwks and token signing work) and the database (/api, the MCP tools
+        and the postgres store backend all read from it). The database check is
+        unconditional because there is no configuration in which this server
+        serves without it; "alive but no database" is not a serving state.
+
+        Failure returns 503 with a generic per-check status. Details go to the
+        log (which is redacted) and never into a response body an
+        unauthenticated caller can read.
+
+        Results are reused for settings.readyz_cache_seconds so that polling
+        infrastructure cannot turn steady probes into a connection-pool drain.
+        """
+        ttl = settings.readyz_cache_seconds
+        with _readyz_lock:
+            if ttl > 0 and time.monotonic() - _readyz_cache["at"] < ttl:
+                status, body = _readyz_cache["status"], _readyz_cache["body"]
+            else:
+                status, body = _probe_readiness()
+                if ttl > 0:
+                    _readyz_cache.update(at=time.monotonic(),
+                                         status=status, body=body)
+        return JSONResponse(body, status_code=status,
+                            headers={"Cache-Control": "no-store"})
 
     @application.get("/jwks")
     def jwks() -> dict:
