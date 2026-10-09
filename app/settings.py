@@ -111,6 +111,22 @@ class Settings:
         ).split(",") if r.strip()
     )
 
+    # DCR redirect-URI policy. Default is the strict OAuth 2.1 baseline:
+    # https anywhere, http on loopback only (RFC 8252 for native apps).
+    # MCP hosts that are editor extensions register a PRIVATE-USE scheme
+    # instead of a loopback port — Cline uses
+    # `vscode://saoudrizwan.claude-dev/mcp-auth/callback/<hash>`, whose hash
+    # is derived from the server URL and therefore cannot be pre-registered.
+    # RFC 8252 §7.1 permits private-use schemes; PKCE S256 (which /authorize
+    # already requires of every client) is the mitigation against scheme
+    # hijack. Opt in per deployment, e.g. DCR_ALLOWED_REDIRECT_SCHEMES=vscode.
+    # Empty (the default) keeps registration strict — no behaviour change.
+    dcr_allowed_redirect_schemes: tuple[str, ...] = tuple(
+        s.strip().lower() for s in _env(
+            "DCR_ALLOWED_REDIRECT_SCHEMES", ""
+        ).split(",") if s.strip()
+    )
+
 
 
 settings = Settings()

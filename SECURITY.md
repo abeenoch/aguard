@@ -28,6 +28,8 @@ Pre-1.0: the latest `main` branch only.
 | Hand-rolled OIDC — not independently audited | Planned: external review before 1.0 | Suitable for evaluation/dev; get a review before production |
 | Single-tenant config (no org/project isolation server-side) | Hosted multi-tenancy in progress | One deployment per tenant |
 | Open Dynamic Client Registration (`/register`) | Rate limiting in progress | Expected by MCP clients; validate-then-register only, redirect URIs strict |
+| DCR redirect policy: private-use schemes (`vscode://`, …) only when opted in | Opt-in via `DCR_ALLOWED_REDIRECT_SCHEMES`, off by default | Required by editor-extension MCP hosts (e.g. Cline) whose redirect hash cannot be pre-registered; PKCE S256 stays mandatory and a forbidden-scheme denylist always applies |
+| `/authorize` grants the client's registered scopes when `scope` is omitted | RFC 6749 §3.3 default, never a superset of the registration | Non-OIDC MCP clients may omit `scope`; the consent screen shows exactly what is granted |
 | MCP resource server runs in-process with the AS (both on one app/port) | Planned: split into a separate deployable service | Fine for evaluation; separate the two before production so a resource-server compromise is not an AS compromise |
 
 ## Scope notes

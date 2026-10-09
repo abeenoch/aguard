@@ -26,6 +26,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.oidc.clients import Client, ClientRegistry, hash_secret
+from app.settings import settings
 
 router = APIRouter()
 
@@ -35,20 +36,49 @@ _ALL_SCOPES = {
     "openid", "profile", "email", "orders:read", "orders:write", "agents:read",
 }
 
+# Schemes that must NEVER be registrable as a redirect target, whatever the
+# deployment opts into: they execute or exfiltrate in the user agent rather
+# than delivering a code to a real client.
+_FORBIDDEN_SCHEMES = {
+    "javascript", "data", "file", "blob", "about", "vbscript",
+    "chrome", "chrome-extension", "moz-extension", "view-source",
+}
 
-def _validate_redirect_uri(uri: str) -> str | None:
-    """Return an error reason, or None if acceptable. EXACT-uri rules:
-    absolute, no fragment, https — or http on loopback only."""
+
+def _validate_redirect_uri(
+    uri: str, *, allowed_schemes: frozenset[str] = frozenset()
+) -> str | None:
+    """Return an error reason, or None if acceptable.
+
+    Baseline (always allowed): absolute https, or http on loopback only
+    (RFC 8252 §7.2/§7.3). Additionally, a deployment may opt into private-use
+    scheme redirection (`allowed_schemes`, RFC 8252 §7.1) for MCP hosts that
+    are editor extensions — those register e.g.
+    `vscode://saoudrizwan.claude-dev/mcp-auth/callback/<hash>` and have no
+    loopback port to hand back. Private-use URIs must still be absolute, carry
+    an authority, omit any fragment, be on the explicit allowlist, and never be
+    a member of _FORBIDDEN_SCHEMES. Exact-match validation at /authorize plus
+    mandatory PKCE S256 are what keep private-use schemes from becoming an
+    open-redirect or code-interception hole.
+    """
     parsed = urlparse(uri)
     if not parsed.scheme or not parsed.netloc:
         return f"redirect_uri must be absolute: {uri!r}"
     if parsed.fragment:
         return f"redirect_uri must not contain a fragment: {uri!r}"
-    if parsed.scheme == "https":
+    scheme = parsed.scheme.lower()
+    if scheme == "https":
         return None
-    if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+    if scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
         return None
-    return f"redirect_uri must be https (http allowed for loopback only): {uri!r}"
+    if scheme in allowed_schemes:
+        if scheme in _FORBIDDEN_SCHEMES:
+            return f"redirect_uri scheme is not permitted: {uri!r}"
+        return None
+    return (
+        "redirect_uri must be https (http allowed for loopback only, or an "
+        f"explicitly allowed private-use scheme): {uri!r}"
+    )
 
 
 def _error(status: int, code: str, description: str) -> JSONResponse:
@@ -67,6 +97,7 @@ async def register_client(request: Request) -> JSONResponse:
         return _error(400, "invalid_client_metadata", "body must be JSON")
 
     # --- redirect_uris: the make-or-break validation ---
+    allowed_schemes = frozenset(settings.dcr_allowed_redirect_schemes)
     redirect_uris = body.get("redirect_uris", [])
     if not isinstance(redirect_uris, list) or len(redirect_uris) > 10:
         return _error(400, "invalid_redirect_uri",
@@ -74,7 +105,7 @@ async def register_client(request: Request) -> JSONResponse:
     for uri in redirect_uris:
         if not isinstance(uri, str):
             return _error(400, "invalid_redirect_uri", "each URI must be a string")
-        reason = _validate_redirect_uri(uri)
+        reason = _validate_redirect_uri(uri, allowed_schemes=allowed_schemes)
         if reason:
             return _error(400, "invalid_redirect_uri", reason)
 

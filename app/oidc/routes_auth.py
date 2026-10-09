@@ -97,15 +97,23 @@ def validate_authorize_params(
             "unsupported_response_type", "only response_type=code is supported", True
         )
 
-    scopes = set((scope or "").split())
-    if "openid" not in scopes:
-        return None, ValidationError(
-            "invalid_scope", "the openid scope is required", True
-        )
-    if not client.allows_scopes(scopes):
-        return None, ValidationError(
-            "invalid_scope", "requested scope not allowed for this client", True
-        )
+    # MCP clients are not OIDC clients: `openid` is optional at /authorize
+    # (it only gates id_token issuance later at /token), and a client may
+    # legitimately omit `scope` entirely — Cline historically did, and strict
+    # providers rejecting it was a reported interop failure. RFC 6749 §3.3
+    # leaves the omitted-scope default to the AS: we grant the client's own
+    # REGISTERED scopes (the most it could ever be given, never more), and the
+    # consent screen shows exactly what is being granted. Anything outside the
+    # registration is still refused.
+    if scope:
+        scopes = set(scope.split())
+        if not client.allows_scopes(scopes):
+            return None, ValidationError(
+                "invalid_scope", "requested scope not allowed for this client", True
+            )
+        granted_scope = " ".join(sorted(scopes))
+    else:
+        granted_scope = " ".join(sorted(client.allowed_scopes))
 
     if not state:
         # state is the CSRF binding between request and callback — required,
@@ -137,7 +145,7 @@ def validate_authorize_params(
     return ValidatedAuthRequest(
         client=client,
         redirect_uri=redirect_uri or "",
-        scope=scope or "",
+        scope=granted_scope,
         state=state or "",
         code_challenge=code_challenge or "",
         code_challenge_method="S256",

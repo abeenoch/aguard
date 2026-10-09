@@ -165,6 +165,25 @@ Cline discovers the AS from the `WWW-Authenticate` header, registers itself,
 and runs the browser authorization flow. Leave `autoApprove` empty so the
 refused tool call is visible in the conversation rather than hidden.
 
+Cline is an editor extension, so it registers a **private-use** redirect
+(`vscode://saoudrizwan.claude-dev/mcp-auth/callback/<hash>`) instead of a
+loopback port. That is opt-in, because `https`/loopback stays the default:
+
+```bash
+DCR_ALLOWED_REDIRECT_SCHEMES=vscode   # in .env, then restart the server
+```
+
+Before recording or demoing with a given client, check that its exact request
+sequence is satisfiable — this replays discovery, DCR, the `/authorize`
+contract and a full `tools/list` over MCP:
+
+```bash
+python scripts/cline_preflight.py     # expect 9/9 gates passed
+```
+
+Full walkthrough, recording beats and post-run evidence:
+[docs/DEMO_CLINE.md](docs/DEMO_CLINE.md).
+
 ### Prove it
 
 ```bash
@@ -176,7 +195,7 @@ pytest tests/test_mcp_resource_server.py  # 10 tests, in-process, no network
 
 ## Status
 
-Alpha. 143 tests green (unit + live-server smoke). Known limitations are
+Alpha. 159 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — in-memory token stores (single
 process), no rate limiting yet, and the MCP resource server runs in-process
 with the AS (split into a separate service before any real deployment).
