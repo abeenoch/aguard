@@ -28,6 +28,7 @@ Pre-1.0: the latest `main` branch only.
 | Hand-rolled OIDC — not independently audited | Planned: external review before 1.0 | Suitable for evaluation/dev; get a review before production |
 | Single-tenant config (no org/project isolation server-side) | Hosted multi-tenancy in progress | One deployment per tenant |
 | Open Dynamic Client Registration (`/register`) | Rate limiting in progress | Expected by MCP clients; validate-then-register only, redirect URIs strict |
+| MCP resource server runs in-process with the AS (both on one app/port) | Planned: split into a separate deployable service | Fine for evaluation; separate the two before production so a resource-server compromise is not an AS compromise |
 
 ## Scope notes
 

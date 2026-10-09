@@ -50,7 +50,7 @@ In another terminal:
 
 ```bash
 python scripts/smoke.py      # 12 end-to-end checks: OIDC flow, RBAC, redaction
-pytest                        # 113 tests
+pytest                        # 143 tests
 ```
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
@@ -114,17 +114,79 @@ Request ──▶ auth middleware (JWT: sig/iss/aud/exp/scope → principal)
 - `roles: ["human"]` → `app_user` (read/write own rows)
 - `roles: ["agent"]` → `agent_readonly` (read-only, own tenant rows)
 
+## MCP resource server (Streamable HTTP, OAuth-protected)
+
+`/mcp` is a real MCP server speaking **Streamable HTTP**. It is protected by
+the same authorization server as everything else — an MCP client with no token
+gets a `401` carrying an RFC 9728 `resource_metadata` pointer, follows it to
+discover our AS, registers (RFC 7591 DCR), runs code + PKCE, and asks for a
+token audience-bound to this resource (RFC 8707):
+
+```json
+POST /token
+grant_type=client_credentials&resource=http://localhost:8000/mcp
+```
+
+Three tools — and the third is the point:
+
+| Tool | Human | Agent |
+|---|---|---|
+| `list_documents` | own rows | own tenant rows (RLS) |
+| `read_document` | own rows | own tenant rows (RLS) |
+| `delete_document` | own rows ✅ | **refused by Postgres** ⛔ |
+
+An agent's `delete_document` call reaches the handler and runs the `DELETE` —
+then Postgres raises `InsufficientPrivilege`, because the agent's session is
+`agent_readonly`, which has no `DELETE` grant. The tool reports the refusal
+(never retries, escalates, or converts it to success) and audits the attempt.
+**The LLM cannot talk its way past a `GRANT`.**
+
+A token minted for `/api` is rejected here, and vice versa: audience binding
+means one token cannot be replayed against the other surface.
+
+### Point Cline (or any MCP host) at it
+
+Add to `cline_mcp_settings.json` (or use the in-app Remote Servers tab):
+
+```json
+{
+  "mcpServers": {
+    "a-guard-documents": {
+      "type": "streamableHttp",
+      "url": "http://localhost:8000/mcp",
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+Cline discovers the AS from the `WWW-Authenticate` header, registers itself,
+and runs the browser authorization flow. Leave `autoApprove` empty so the
+refused tool call is visible in the conversation rather than hidden.
+
+### Prove it
+
+```bash
+uvicorn app.main:app --port 8000          # terminal 1
+python scripts/mcp_smoke.py               # terminal 2 — real MCP client SDK
+pytest tests/test_mcp_resource_server.py  # 10 tests, in-process, no network
+```
+
+
 ## Status
 
-Alpha. 113 tests green (unit + live-server smoke). Known limitations are
+Alpha. 143 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — in-memory token stores (single
-process), no rate limiting yet, MCP authorization server compliance in
-progress.
+process), no rate limiting yet, and the MCP resource server runs in-process
+with the AS (split into a separate service before any real deployment).
 
 ## Roadmap
 
 - **MCP Authorization Server** ✅ `RFC 8414`, `RFC 9728`, `RFC 8707`, `RFC 7591` (DCR)
 - `/userinfo`, `/revoke` (RFC 7009), `/introspect` (RFC 7662) ✅ — formerly advertised, now real
+- **MCP resource server** at `/mcp` ✅ — Streamable HTTP, audience-bound tokens, DB-enforced tools
+- Split the resource server into its own deployable service (own port, own container)
 - `docker compose up` one-command install
 - OpenTelemetry/Langfuse export of *redacted* traces
 

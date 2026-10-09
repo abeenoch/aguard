@@ -23,6 +23,7 @@ dependencies = [
     "psycopg[binary]",
     "psycopg-pool",
     "python-multipart",
+    "mcp>=1.19.0,<2",
 ]
 
 [project.optional-dependencies]
