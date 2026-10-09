@@ -17,14 +17,13 @@ from fastapi import FastAPI
 from app.api.routes import router as api_router
 from app.mcp.server import build_mcp
 from app.oidc.clients import seed_registry
-from app.oidc.codes import AuthCodeStore
 from app.oidc.keys import KeyManager
 from app.oidc.metadata import router as metadata_router
-from app.oidc.refresh import RefreshTokenStore
 from app.oidc.routes_auth import router as auth_router
 from app.oidc.routes_register import router as register_router
 from app.oidc.routes_revocable import router as revocable_router
 from app.oidc.routes_token import router as token_router
+from app.oidc.stores import build_stores
 from app.redact.logging import install as install_redaction
 from app.settings import settings
 
@@ -70,8 +69,12 @@ def create_app() -> FastAPI:
     application = FastAPI(title="a-guard", version="0.1.0", lifespan=lifespan)
     application.state.keys = keys
     application.state.registry = seed_registry()
-    application.state.codes = AuthCodeStore()
-    application.state.refresh = RefreshTokenStore()
+    # Backend chosen by STORE_BACKEND: memory (single process) or postgres
+    # (shared + restart-durable). See app/oidc/stores.py for why this is a
+    # security decision, not just an operational one.
+    codes, refresh = build_stores()
+    application.state.codes = codes
+    application.state.refresh = refresh
 
     # PII-redacting choke point: handler-level filters for every record the
     # app emits, PLUS uvicorn's own handlers (access log lines carry URLs).

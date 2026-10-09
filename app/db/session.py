@@ -31,15 +31,45 @@ def _validate_sub(sub: str) -> str:
 _pools: dict[str, ConnectionPool] = {}
 
 
-def get_pool(kind: Literal["human", "agent"]) -> ConnectionPool:
+_DSN_BY_KIND = {
+    "human": lambda: settings.db_dsn_human,
+    "agent": lambda: settings.db_dsn_agent,
+    "auth": lambda: settings.db_dsn_auth,
+}
+
+
+def get_pool(kind: Literal["human", "agent", "auth"]) -> ConnectionPool:
     pool = _pools.get(kind)
     if pool is None:
-        dsn = settings.db_dsn_human if kind == "human" else settings.db_dsn_agent
         # open=True pins current behavior (lazy open becomes opt-in upstream).
-        pool = ConnectionPool(dsn, min_size=1, max_size=10, open=True,
-                              kwargs={"autocommit": False})
+        pool = ConnectionPool(_DSN_BY_KIND[kind](), min_size=1, max_size=10,
+                              open=True, kwargs={"autocommit": False})
         _pools[kind] = pool
     return pool
+
+
+@contextmanager
+def service_session(*, statement_timeout_ms: int = 5000):
+    """Authorization-server session: the auth_service role, no tenant subject.
+
+    Deliberately NOT scoped_session — the AS is not a tenant, so there is no
+    app.sub to bind. It reaches only the token tables (auth_service holds no
+    grants on documents/agent_audit). That asymmetry is the point: a
+    compromised AS session cannot read tenant data, and a compromised tenant
+    session cannot read or forge token state.
+    """
+    pool = get_pool("auth")
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('statement_timeout', %s, true)",
+                        (str(statement_timeout_ms),))
+            cur.execute("SET LOCAL ROLE auth_service")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 @contextmanager
@@ -79,4 +109,4 @@ def close_pools() -> None:
     _pools.clear()
 
 
-__all__ = ["get_pool", "scoped_session", "close_pools"]
+__all__ = ["get_pool", "scoped_session", "service_session", "close_pools"]

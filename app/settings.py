@@ -69,6 +69,13 @@ class Settings:
         "DB_DSN_AGENT",
         "postgresql://app_login_agent:agent-pool-secret-dev@localhost:5432/agent_auth",
     )
+    # Authorization-server state (auth codes, refresh tokens). A THIRD login,
+    # member of auth_service only: the AS must not borrow the tenant roles,
+    # and the tenant roles must not reach token tables.
+    db_dsn_auth: str = _env(
+        "DB_DSN_AUTH",
+        "postgresql://app_login_auth:auth-pool-secret-dev@localhost:5432/agent_auth",
+    )
 
     # Superuser password: used ONLY by tests to apply app/db/schema.sql.
     # Never referenced by application code — the app only ever holds the two
@@ -110,6 +117,15 @@ class Settings:
             f"{_MCP_RESOURCE_ID},{_ISSUER}/api",
         ).split(",") if r.strip()
     )
+
+    # Token/state storage backend.
+    #   "memory"   — single process only (default: zero setup, matches dev)
+    #   "postgres" — shared + restart-durable; required before running more
+    #                than one worker, because single-use code tombstones and
+    #                refresh-family revocation are SECURITY state: if worker A
+    #                redeems a code and worker B has never seen it, a replay
+    #                goes undetected.
+    store_backend: str = _env("STORE_BACKEND", "memory").strip().lower()
 
     # DCR redirect-URI policy. Default is the strict OAuth 2.1 baseline:
     # https anywhere, http on loopback only (RFC 8252 for native apps).

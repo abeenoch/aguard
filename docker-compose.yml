@@ -32,6 +32,10 @@ services:
       OIDC_ISSUER: http://localhost:8000
       DB_DSN_HUMAN: postgresql://app_login_human:human-pool-secret-dev@db:5432/agent_auth
       DB_DSN_AGENT: postgresql://app_login_agent:agent-pool-secret-dev@db:5432/agent_auth
+      DB_DSN_AUTH: postgresql://app_login_auth:auth-pool-secret-dev@db:5432/agent_auth
+      # Shared authorization state: tombstones and refresh-family revocation
+      # must survive a restart, and be visible to every process.
+      STORE_BACKEND: postgres
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
       LOG_HASH_PEPPER: ${LOG_HASH_PEPPER:-dev-only-pepper-change-me}
     depends_on:

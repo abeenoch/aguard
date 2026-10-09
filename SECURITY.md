@@ -21,7 +21,8 @@ Pre-1.0: the latest `main` branch only.
 
 | Limitation | Status | Workaround today |
 |---|---|---|
-| In-memory stores (auth codes, refresh tokens, clients, users) | Planned: pluggable store interface (Redis/Postgres) | Run a single process; sticky sessions won't help because stores don't share |
+| Auth codes + refresh tokens default to in-memory (`STORE_BACKEND=memory`) | **Mitigated**: a Postgres backend ships (`STORE_BACKEND=postgres`) | Set `STORE_BACKEND=postgres` before running more than one worker — with per-process state, a replay or stolen refresh token served by another worker goes undetected |
+| Clients + users are code constants (`seed_registry()`, `USERS`) | Planned: move into Postgres | Override dev secrets via env; changing them requires a redeploy |
 | No rate limiting on `/token` + `/login` | Planned (Phase 3) | Front with a rate-limiting proxy |
 | Signing key stored unencrypted on disk (`data/keys/`) | Planned: env/KMS-provided keys | Filesystem permissions; keep `data/keys/` out of backups you don't trust |
 | Dev-default secrets active unless overridden | **Mitigated**: loud startup warning | Set `SESSION_SECRET`, `LOG_HASH_PEPPER` (see `.env.example`) |

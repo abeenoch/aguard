@@ -75,7 +75,7 @@ psql -U postgres -d agent_auth -f app/db/schema.sql
 python scripts/agctl.py verify     # redaction self-check, pass/fail
 python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
 python scripts/mcp_smoke.py        # real MCP client against a live server
-pytest                             # 170 tests
+pytest                             # 183 tests
 ```
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
@@ -249,9 +249,10 @@ a real run:
 
 ## Status
 
-Alpha. 166 tests green (unit + live-server smoke). Known limitations are
-tracked in [SECURITY.md](SECURITY.md) — in-memory token stores (single
-process), no rate limiting yet, and the MCP resource server runs in-process
+Alpha. 183 tests green (unit + live-server smoke). Known limitations are
+tracked in [SECURITY.md](SECURITY.md) — authorization state defaults to
+in-memory (set `STORE_BACKEND=postgres` before running more than one worker),
+no rate limiting yet, and the MCP resource server runs in-process
 with the AS (split into a separate service before any real deployment).
 
 ## Roadmap
@@ -260,6 +261,8 @@ with the AS (split into a separate service before any real deployment).
 - `/userinfo`, `/revoke` (RFC 7009), `/introspect` (RFC 7662) ✅ — formerly advertised, now real
 - **MCP resource server** at `/mcp` ✅ — Streamable HTTP, audience-bound tokens, DB-enforced tools
 - **CLI observability** ✅ — `scripts/agctl.py`: redaction proof, audit trail, CSV/JSONL export
+- **Persistent authorization state** ✅ — pluggable stores; `STORE_BACKEND=postgres` makes code tombstones and refresh-family revocation survive restarts and span workers
+- Token-endpoint rate limiting; readiness probe that actually checks the database
 - Restyle the auth pages (Jinja2 + design tokens) — see [docs/DESIGN.md](docs/DESIGN.md) → E1
 - Move users/clients out of Python constants into Postgres → E2
 - Index `agent_audit`; add `org_id` → E3

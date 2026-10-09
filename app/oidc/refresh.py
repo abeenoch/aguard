@@ -31,6 +31,7 @@ import hashlib
 import secrets
 import time
 from dataclasses import dataclass
+from typing import Protocol
 
 from app.settings import settings
 
@@ -60,7 +61,28 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-class RefreshTokenStore:
+class RefreshTokenStore(Protocol):
+    """Storage contract for refresh tokens (see app/oidc/stores.py)."""
+
+    def issue(self, *, client_id: str, subject: str, scope: str,
+              family_id: str | None = None) -> tuple[str, RefreshRecord]: ...
+
+    def rotate(self, raw: str, *, client_id: str) -> tuple[str, RefreshRecord]: ...
+
+    def revoke_by_raw(self, raw: str) -> bool: ...
+
+    def peek(self, raw: str) -> RefreshRecord | None: ...
+
+
+class InMemoryRefreshTokenStore:
+    """Single-process store.
+
+    Same caveat as InMemoryAuthCodeStore, and here it is sharper: reuse
+    detection and family revocation live in this process's dict. Run two
+    workers and the thief can rotate against the worker that has not yet seen
+    the retirement — the family never burns.
+    """
+
     def __init__(self, ttl_seconds: int | None = None) -> None:
         self._ttl = ttl_seconds if ttl_seconds is not None else settings.refresh_token_ttl
         self._by_hash: dict[str, RefreshRecord] = {}
@@ -158,3 +180,125 @@ class RefreshTokenStore:
         ]
         for h in dead:
             del self._by_hash[h]
+
+
+class PostgresRefreshTokenStore:
+    """Shared store: reuse detection and family revocation span workers.
+
+    The subtle part is the reuse path. Revoking the family and then raising
+    would ROLL BACK the revocation (service_session rolls back on exception),
+    handing the attacker a still-working token — so the revocation is written
+    inside the transaction, the transaction is allowed to COMMIT, and only
+    then do we raise.
+    """
+
+    def __init__(self, ttl_seconds: int | None = None) -> None:
+        self._ttl = (ttl_seconds if ttl_seconds is not None
+                     else settings.refresh_token_ttl)
+
+    def issue(self, *, client_id: str, subject: str, scope: str,
+              family_id: str | None = None) -> tuple[str, RefreshRecord]:
+        from app.db.session import service_session
+        now = int(time.time())
+        raw = secrets.token_urlsafe(48)
+        record = RefreshRecord(
+            token_hash=_hash(raw),
+            family_id=family_id or secrets.token_urlsafe(16),
+            client_id=client_id, subject=subject, scope=scope,
+            issued_at=now, expires_at=now + self._ttl)
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                _insert_record(cur, record)
+                self._gc(cur, now)
+        return raw, record
+
+    def rotate(self, raw: str, *, client_id: str) -> tuple[str, RefreshRecord]:
+        from app.db.session import service_session
+        now = int(time.time())
+        reuse_family: str | None = None
+        result: tuple[str, RefreshRecord] | None = None
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT family_id, client_id, subject, scope, issued_at,"
+                    " expires_at, retired, revoked FROM refresh_tokens"
+                    " WHERE token_hash = %s FOR UPDATE", (_hash(raw),))
+                row = cur.fetchone()
+                if row is None:
+                    raise RefreshError("unknown refresh token")
+                (family, cid, subject, scope, issued_at, expires_at,
+                 retired, revoked) = row
+                if revoked:
+                    raise RefreshError("refresh token revoked")
+                if retired:
+                    cur.execute("UPDATE refresh_tokens SET revoked = true"
+                                " WHERE family_id = %s", (family,))
+                    reuse_family = family          # commit, THEN raise
+                elif expires_at < time.time():
+                    # float clock, matching InMemoryRefreshTokenStore
+                    raise RefreshError("refresh token expired")
+                elif cid != client_id:
+                    raise RefreshError(
+                        "refresh token not issued to this client")
+                else:
+                    cur.execute("UPDATE refresh_tokens SET retired = true"
+                                " WHERE token_hash = %s", (_hash(raw),))
+                    new_raw = secrets.token_urlsafe(48)
+                    successor = RefreshRecord(
+                        token_hash=_hash(new_raw), family_id=family,
+                        client_id=cid, subject=subject, scope=scope,
+                        issued_at=now, expires_at=now + self._ttl)
+                    _insert_record(cur, successor)
+                    result = (new_raw, successor)
+        if reuse_family is not None:
+            raise RefreshReuseError(
+                f"refresh token reuse detected; family {reuse_family} revoked")
+        assert result is not None
+        return result
+
+    def revoke_by_raw(self, raw: str) -> bool:
+        from app.db.session import service_session
+        if not raw:
+            return False
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT family_id FROM refresh_tokens"
+                            " WHERE token_hash = %s", (_hash(raw),))
+                row = cur.fetchone()
+                if row is None:
+                    return False                # no validity oracle
+                cur.execute("UPDATE refresh_tokens SET revoked = true"
+                            " WHERE family_id = %s", (row[0],))
+                return True
+
+    def peek(self, raw: str) -> RefreshRecord | None:
+        from app.db.session import service_session
+        if not raw:
+            return None
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT token_hash, family_id, client_id, subject, scope,"
+                    " issued_at, expires_at, retired, revoked FROM refresh_tokens"
+                    " WHERE token_hash = %s", (_hash(raw),))
+                row = cur.fetchone()
+        if row is None:
+            return None
+        record = RefreshRecord(*row)
+        if record.revoked or record.retired or record.expires_at < time.time():
+            return None
+        return record
+
+    def _gc(self, cur, now: int) -> None:
+        cur.execute("DELETE FROM refresh_tokens"
+                    " WHERE expires_at < %s AND NOT revoked", (now,))
+
+
+def _insert_record(cur, record: RefreshRecord) -> None:
+    cur.execute(
+        "INSERT INTO refresh_tokens(token_hash, family_id, client_id, subject,"
+        " scope, issued_at, expires_at, retired, revoked)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (record.token_hash, record.family_id, record.client_id, record.subject,
+         record.scope, record.issued_at, record.expires_at, record.retired,
+         record.revoked))

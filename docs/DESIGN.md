@@ -350,6 +350,7 @@ the data.
 | D5 | Operator sign-in | ⏸ moot | No web operator surface to sign into (§3.0) |
 | D6 | Database name | open | **keep `agent_auth`** (default) · rename to `a_guard` — requires a coordinated `ALTER DATABASE` plus updates to `settings.py`, `schema.sql`, CI, compose, and three test files |
 | D7 | Operator surface | ✅ done | **CLI + export** (`scripts/agctl.py`), not a browser dashboard (§3.0) |
+| D8 | Authorization state storage | ✅ done | Pluggable: `memory` (default) / `postgres`. Not an ops nicety — per-process tombstones make replay undetectable across workers, so the backend is a security property |
 
 D6 is deliberately *not* bundled with D3: the product rename touched files,
 whereas the DB rename mutates a running database — and the local Postgres is a
