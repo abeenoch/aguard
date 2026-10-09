@@ -98,7 +98,7 @@ def verify_access_token(
                 "verify_aud": True,
             },
         )
-    except pyjwt.ExpiredSignatureError as exc:
+    except pyjwt.ExpiredSignatureError:
         raise TokenValidationError("token expired") from None
     except pyjwt.ImmatureSignatureError:
         raise TokenValidationError("token not yet valid (nbf/iat)") from None

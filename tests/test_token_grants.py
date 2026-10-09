@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from aguard.main import app
 from aguard.oidc.pkce import challenge_s256, generate_verifier
-from aguard.oidc.validation import TokenValidationError, verify_access_token
+from aguard.oidc.validation import verify_access_token
 
 client = TestClient(app)
 

@@ -2,7 +2,13 @@
 from __future__ import annotations
 
 from aguard.oidc.validation import verify_access_token
-from tests.test_token_grants import REGISTERED_REDIRECT, _basic, _exchange, _obtain_code, app
+from tests.test_token_grants import (
+    REGISTERED_REDIRECT,
+    _basic,
+    _exchange,
+    _obtain_code,
+    app,
+)
 
 
 def _get_refresh(*, client_id="demo-spa", scope="openid orders:read",

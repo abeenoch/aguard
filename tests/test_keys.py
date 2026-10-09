@@ -91,7 +91,7 @@ def test_sign_pins_algorithm_header(tmp_path):
 
 
 def _retired(km: KeyManager):
-    return [k for k in km.all_keys if k.status == "retired"][0]
+    return next(k for k in km.all_keys if k.status == "retired")
 
 
 def test_retire_expired_keeps_a_freshly_retired_key(tmp_path):

@@ -11,13 +11,21 @@ jobs:
     # Ubuntu 26, which would silently change the PostgreSQL version underneath
     # us (our schema needs >= 15 for `security_invoker` views).
     runs-on: ubuntu-24.04
+    strategy:
+      # One interpreter failing must not cancel the others: the point of the
+      # matrix is to find WHICH version broke.
+      fail-fast: false
+      matrix:
+        # pyproject claims >=3.11, so every version in that claim gets run.
+        # Testing only the oldest is an untested promise for the rest.
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       # PostgreSQL is installed HERE rather than via a `services:` container.
@@ -111,4 +119,35 @@ jobs:
       - name: Stop the container
         if: always()
         run: docker rm -f aguard-smoke || true
+
+  # Static gates, deliberately in their own job: they fail for a different
+  # reason than a red test, and separating them keeps that obvious at a glance.
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # The gate that found a real defect the moment it was switched on:
+      # a 'next' route parameter shadowing builtin next(), and a list logging
+      # argument that silently destroyed the log record.
+      - name: Types (mypy)
+        run: mypy
+
+      # Scoped to THIS project's dependencies (pip-audit .), not the whole
+      # interpreter environment: an environment audit also reports the build
+      # tooling bundled with the interpreter (pip, setuptools), which we do not
+      # ship and cannot fix from here — noise at best, a false gate at worst.
+      - name: Vulnerable dependencies (pip-audit)
+        run: pip-audit .
 

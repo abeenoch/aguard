@@ -44,6 +44,7 @@ def redact_record(record: logging.LogRecord, pepper: bytes) -> None:
             # PRESERVE structure — formatters read record.args directly
             # (uvicorn's AccessFormatter unpacks it into 5 values; rendering
             # msg % args and clearing args broke exactly that in Phase 1).
+            new_args: Any
             if isinstance(record.args, dict):
                 new_args = redact_event(dict(record.args), pepper)
             else:
@@ -77,10 +78,10 @@ def redact_record(record: logging.LogRecord, pepper: bytes) -> None:
                 continue
             if isinstance(value, str):
                 record.__dict__[key] = redact_text(value, pepper)
-    except Exception:   # noqa: BLE001 — fail CLOSED: raw data must not flow
+    except Exception:   # fail CLOSED: no path may let a raw record through
         record.msg, record.args, record.exc_info, record.exc_text = (
             "[LOG_DROPPED: redactor_error]", (), None, None)
-    record._pii_done = True   # noqa: SLF001 (marker attr, deliberate)
+    record._pii_done = True   # private marker attribute, set on purpose
 
 
 class RedactionFilter(logging.Filter):
@@ -92,7 +93,7 @@ class RedactionFilter(logging.Filter):
         super().__init__(name)
         self.pepper = pepper
 
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+    def filter(self, record: logging.LogRecord) -> bool:
         redact_record(record, self.pepper)
         return True
 
@@ -108,11 +109,21 @@ _SWEEP_SKIP = {
 
 def _redact_arg(value: Any, pepper: bytes) -> Any:
     """Element-wise arg redaction: strings scrubbed, containers walked,
-    primitives (ints — status codes etc.) untouched. Structure preserved."""
+    primitives (ints — status codes etc.) untouched. Structure preserved.
+
+    Lists are walked ELEMENT-WISE rather than handed to redact_event(): that
+    function takes a mapping and does dict(event), so a list argument
+    (``logger.info("items: %s", ["a@b.com"])``) raises. The failure is caught
+    one level up and fails closed, which means the record silently becomes
+    [LOG_DROPPED] and a legitimate log line disappears. Found by the mypy
+    gate — exactly the class of defect it exists for.
+    """
     if isinstance(value, str):
         return redact_text(value, pepper)
-    if isinstance(value, (dict, list)):
+    if isinstance(value, dict):
         return redact_event(value, pepper)
+    if isinstance(value, list):
+        return [_redact_arg(item, pepper) for item in value]
     return value
 
 
@@ -148,9 +159,9 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         message = record.getMessage()
-        event = {
+        event: dict[str, Any] = {
             "ts": datetime.datetime.fromtimestamp(
-                record.created, tz=datetime.timezone.utc).isoformat(),
+                record.created, tz=datetime.UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": message,
@@ -205,7 +216,10 @@ def install(logger_name: str, pepper: bytes,
         handler.addFilter(redactor)
         if force_json:
             handler.setFormatter(JsonFormatter())
-        handler._pii_installed = _marker   # noqa: SLF001 (deliberate marker)
+        # Plain assignment plus a narrow ignore: the marker lives on a stdlib
+        # Handler, which mypy cannot know about, and setattr() would only
+        # silence ruff (B010) without adding any safety.
+        handler._pii_installed = _marker  # type: ignore[attr-defined]
     return logger
 
 
@@ -224,5 +238,5 @@ def wire_uvicorn(pepper: bytes) -> None:
             if getattr(handler, "_pii_installed", None) is _marker:
                 continue
             handler.addFilter(redactor)
-            handler._pii_installed = _marker   # noqa: SLF001
+            handler._pii_installed = _marker  # type: ignore[attr-defined]
 

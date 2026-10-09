@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from aguard.oidc.clients import Client, ClientRegistry
@@ -221,8 +221,10 @@ def authorize(
         nonce=nonce,
         resource=resource,
     )
-    if verr is not None or validated is None:
+    if verr is not None:
         return _fail(verr, state=state, redirect_uri=redirect_uri)
+    if validated is None:              # contract violation: fail closed
+        raise RuntimeError("validate_authorize_params returned no result")
 
     sub = _current_sub(request)
     if sub is None or sub not in USERS:
@@ -250,8 +252,10 @@ def authorize(
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(next: str = "/") -> HTMLResponse:
-    return HTMLResponse(login_form(next_url=_safe_next(next)))
+def login_page(next_url: str = Query("/", alias="next")) -> HTMLResponse:
+    # Same `next` naming rule as POST /login: the wire parameter is `next`,
+    # the Python name is not.
+    return HTMLResponse(login_form(next_url=_safe_next(next_url)))
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -259,7 +263,12 @@ def login(
     request: Request,
     email: str = Form(""),
     password: str = Form(""),
-    next: str = Form("/"),
+    # alias: the WIRE field stays `next` (the form and every /authorize
+    # redirect have always used that name), but the Python parameter must not
+    # be called `next` — that shadows the builtin, and the dummy verify below
+    # needs it. Naming it `next` is how this broke once already: mypy's
+    # "str is not callable" is the whole bug report.
+    next_url: str = Form("/", alias="next"),
 ) -> Response:
     # Two limits, because they see different attacks: the address catches one
     # host hammering the form, the account catches a botnet spending many
@@ -277,22 +286,24 @@ def login(
     if user is None:
         # Dummy verify: keeps unknown-email timing indistinguishable from
         # wrong-password timing, so the login form can't enumerate accounts.
-        # (NOTE: the `next` route param shadows builtin next() here — index
-        # into a list instead, or the sandbox reveals exactly this bug.)
+        # Any user will do; builtin next() is available because the route
+        # parameter above is named next_url.
         from aguard.oidc.users import USERS as _all
-        verify_password(list(_all.values())[0], password)
+        verify_password(next(iter(_all.values())), password)
         ok = False
     else:
         ok = verify_password(user, password)
 
-    if not ok:
+    # `user is None` can only mean ok is False, but saying both here is what
+    # lets the type checker see that user.sub below is safe.
+    if not ok or user is None:
         return HTMLResponse(
-            login_form(next_url=_safe_next(next),
+            login_form(next_url=_safe_next(next_url),
                        error="Invalid email or password."),
             status_code=401,
         )
 
-    resp = RedirectResponse(_safe_next(next), 303)
+    resp = RedirectResponse(_safe_next(next_url), 303)
     resp.set_cookie(
         SESSION_COOKIE,
         create_session_token(user.sub),
@@ -335,8 +346,10 @@ def consent(
         nonce=nonce,
         resource=resource,
     )
-    if verr is not None or validated is None:
+    if verr is not None:
         return _fail(verr, state=state, redirect_uri=redirect_uri)
+    if validated is None:              # contract violation: fail closed
+        raise RuntimeError("validate_authorize_params returned no result")
 
     sub = _current_sub(request)
     if sub is None or sub not in USERS:

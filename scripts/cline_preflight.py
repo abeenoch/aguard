@@ -129,7 +129,7 @@ def run() -> int:
 
         check("accepts the documented parameter set", dict(base),
               want_accept=True)
-        check("requires state (CSRF binding)", 
+        check("requires state (CSRF binding)",
               {k: v for k, v in base.items() if k != "state"},
               want_accept=False)
         check("requires PKCE S256 (OAuth 2.1)",

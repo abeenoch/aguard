@@ -11,10 +11,10 @@ protected resource API, and the MCP Streamable HTTP resource server at /mcp.
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import logging
 import threading
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -155,7 +155,10 @@ def create_app() -> FastAPI:
         healthy = True
 
         try:
-            keys.jwks                       # loads and parses the keystore
+            # Readiness means we can publish keys: force the keystore to be
+            # loaded and parsed, and fail if it produced nothing to publish.
+            if not keys.jwks.get("keys"):
+                raise RuntimeError("keystore published no keys")
             checks["keys"] = "ok"
         except Exception:
             checks["keys"] = "error"

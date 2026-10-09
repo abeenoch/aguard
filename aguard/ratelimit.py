@@ -38,8 +38,9 @@ import math
 import threading
 import time
 from collections import OrderedDict, deque
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Protocol
+from typing import Protocol
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse

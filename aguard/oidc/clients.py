@@ -24,7 +24,6 @@ import os
 from dataclasses import dataclass
 
 
-
 def hash_secret(secret: str) -> str:
     """SHA-256 for the lab.
 

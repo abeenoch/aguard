@@ -10,11 +10,10 @@ the pool-contamination bug.
 """
 from __future__ import annotations
 
-import pytest
 import psycopg
+import pytest
 
 from aguard.db.session import close_pools, scoped_session
-from aguard.settings import settings
 
 ALICE = "usr_alice"
 BOB = "usr_bob"

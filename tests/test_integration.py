@@ -157,6 +157,7 @@ def test_prompt_injection_delete_dies_at_database(api_client):
     """The money test: SQL shaped like a prompt-injection payload goes to the
     agent's session — and Postgres, not application code, says no."""
     import psycopg
+
     from aguard.db.session import scoped_session
     payload_title = "x'); DELETE FROM documents; --"
     with pytest.raises(psycopg.errors.InsufficientPrivilege):

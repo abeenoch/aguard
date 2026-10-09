@@ -86,7 +86,6 @@ def _may_inspect(client: Client, token_owner: str | None) -> bool:
 
 
 def _userinfo(request: Request) -> JSONResponse:
-    request.app.state  # touch for type checkers
     token = _bearer_token(request)
     if not token:
         return _error(401, "invalid_token",

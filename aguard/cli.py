@@ -166,7 +166,22 @@ def _fetch_audit(*, limit: int, sub: str | None = None,
 
 
 def _as_dicts(rows: list[tuple]) -> list[dict]:
-    return [dict(zip(AUDIT_COLUMNS, row)) for row in rows]
+    # strict=True: the SELECT lists exactly AUDIT_COLUMNS, so a column/schema
+    # change must raise here rather than silently truncate every audit record.
+    return [dict(zip(AUDIT_COLUMNS, row, strict=True)) for row in rows]
+
+
+def _scalar(cur):
+    """The single value of a one-row, one-column query.
+
+    count(*) always returns exactly one row, so None here means the connection
+    or the query is not what we think it is — worth failing loudly rather than
+    leaking an IndexError out of a tuple index.
+    """
+    row = cur.fetchone()
+    if row is None:
+        raise RuntimeError("expected one row from a scalar query, got none")
+    return row[0]
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
@@ -289,7 +304,7 @@ def _audit_row_count(pg_password: str, db_name: str) -> int | None:
         with psycopg.connect(_SUPER_DSN.format(pw=pg_password, db=db_name)) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT count(*) FROM agent_audit")
-                return cur.fetchone()[0]
+                return _scalar(cur)
     except Exception:
         return None                     # no database, or no table yet -> fresh
 
@@ -334,13 +349,13 @@ def _verify(db_name: str) -> bool:
         with conn.cursor() as cur:
             cur.execute("SET ROLE app_user")
             cur.execute("SELECT count(*) FROM documents")
-            check("human role reads documents", True, f"{cur.fetchone()[0]} row(s)")
+            check("human role reads documents", True, f"{_scalar(cur)} row(s)")
 
     with psycopg.connect(_AGENT_DSN.format(db=db_name)) as conn:
         with conn.cursor() as cur:
             cur.execute("SET ROLE agent_readonly")
             cur.execute("SELECT count(*) FROM agent_documents")   # granted view
-            check("agent role reads its tenant", True, f"{cur.fetchone()[0]} row(s)")
+            check("agent role reads its tenant", True, f"{_scalar(cur)} row(s)")
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM documents")

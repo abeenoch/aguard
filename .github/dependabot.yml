@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Directories are "/" because every ecosystem here reads from the repo root
+  # (pyproject.toml, Dockerfile, .github/workflows).
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for routine churn (the whole suite exercises it either way)...
+      routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      # ...but a MAJOR arrives alone, because that is the one that needs a
+      # human to read a changelog before merging.
+    labels: ["dependencies"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "ci"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "docker"]

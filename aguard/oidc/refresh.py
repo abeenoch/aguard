@@ -242,7 +242,7 @@ class PostgresRefreshTokenStore:
                 row = cur.fetchone()
                 if row is None:
                     raise RefreshError("unknown refresh token")
-                (family, cid, subject, scope, issued_at, expires_at,
+                (family, cid, subject, scope, _issued_at, expires_at,
                  retired, revoked) = row
                 if revoked:
                     raise RefreshError("refresh token revoked")

@@ -20,3 +20,6 @@ data/
 pytest.out
 pytest.err
 .pytest_cache/
+# Tool caches (ruff/mypy write these into the repo root)
+.ruff_cache/
+.mypy_cache/

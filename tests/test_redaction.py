@@ -8,6 +8,7 @@ To cover a new attack: append a fixture, watch it fail, harden the engine.
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 from pathlib import Path
@@ -17,7 +18,6 @@ import pytest
 from aguard.redact.logging import RedactionFilter, install
 from aguard.redact.patterns import correlate
 from aguard.redact.redactor import redact_event
-from aguard.settings import settings
 
 PEPPER = b"test-pepper-do-not-use"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -49,6 +49,27 @@ def test_fixture_must_be_caught(case):
     for required in case["has"]:
         assert required in rendered, (
             f"{case['name']}: expected marker missing -> {required!r}")
+
+
+def test_list_argument_is_redacted_instead_of_dropping_the_record():
+    """A list logging argument must be WALKED, not handed to the mapping-only
+    redactor: redact_event() does dict(event), which raises on a list, and the
+    fail-closed handler turns that into [LOG_DROPPED] — a legitimate log line
+    silently disappearing. The mypy gate caught this one."""
+    stream = io.StringIO()
+    name = "a-guard.test.list-arg"
+    logger = logging.getLogger(name)
+    logger.handlers.clear()
+    logger.addHandler(logging.StreamHandler(stream))
+    install(name, PEPPER)
+
+    logger.info("items: %s", ["alice@example.com", "order-123"])
+
+    rendered = stream.getvalue()
+    assert "[LOG_DROPPED" not in rendered, rendered
+    assert "alice@example.com" not in rendered, rendered
+    assert "email[h:" in rendered           # scrubbed, not vanished
+    assert "order-123" in rendered          # structure and safe content kept
 
 
 @pytest.mark.parametrize("case", _load("redact_must_not_catch.json"),

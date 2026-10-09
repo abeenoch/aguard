@@ -24,6 +24,7 @@ import uuid
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import AnyHttpUrl
 
 from aguard.db.session import scoped_session
 from aguard.mcp.auth import AGuardTokenVerifier, current_principal
@@ -151,8 +152,11 @@ def build_mcp(keys: KeyManager) -> FastMCP:
         instructions=INSTRUCTIONS,
         token_verifier=AGuardTokenVerifier(keys),
         auth=AuthSettings(
-            issuer_url=settings.issuer,
-            resource_server_url=settings.mcp_resource_id,
+            # AnyHttpUrl rather than a bare str: the SDK's model declares a URL
+            # type, and passing a string only worked because pydantic coerced
+            # it — the annotations should say what the model expects.
+            issuer_url=AnyHttpUrl(settings.issuer),
+            resource_server_url=AnyHttpUrl(settings.mcp_resource_id),
             required_scopes=[],
             validate_token_resource=True,   # aud must name THIS resource
         ),

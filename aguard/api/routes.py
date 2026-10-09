@@ -14,7 +14,6 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from aguard.api.deps import Principal, require_principal, require_scope

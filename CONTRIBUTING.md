@@ -9,9 +9,10 @@ logging, and databases — contributions to any of the three are welcome.
    with an adversarial mindset. If your change touches auth, redaction, or
    DB permissions, the PR description must state the threat it addresses
    (or explicitly "none — refactoring").
-2. **Tests are the contract.** 113 tests currently pass. Your PR must keep
-   them green and add tests for new behavior. For redaction changes, add
-   fixture cases to `tests/fixtures/redact_must_catch.json` or
+2. **Tests are the contract.** The suite must be green; its size lives in
+   [README.md](README.md) rather than here, so it cannot go stale twice. Add
+   tests for new behavior. For redaction changes, add fixture cases to
+   `tests/fixtures/redact_must_catch.json` or
    `redact_must_not_catch.json` — the corpus *is* the spec.
 3. **Fail closed.** New error paths must degrade to a safe marker, never to
    raw data or silent success.
@@ -27,6 +28,9 @@ pip install -e ".[dev]"
 cp .env.example .env    # fill in PGPASSWORD (tests apply schema.sql)
 createdb agent_auth && psql -d agent_auth -f aguard/db/schema.sql
 pytest                   # must be green before you start
+ruff check .             # lint
+mypy                     # types (config in pyproject.toml)
+pip-audit .              # dependency advisories
 ```
 
 Live server + smoke test:
@@ -39,6 +43,8 @@ python scripts/smoke.py              # terminal 2
 ## PR checklist
 
 - [ ] `pytest` green locally
+- [ ] `ruff check .` and `mypy` clean (both run in CI — see `.github/workflows/ci.yml`)
+- [ ] `pip-audit .` clean (or the advisory is explained in the PR)
 - [ ] New behavior covered by tests (redaction: fixture cases added)
 - [ ] No secrets, credentials, or personal data in the diff
 - [ ] Security-relevant changes explain the threat model in the description

@@ -100,7 +100,10 @@ def scoped_session(*, kind: Literal["human", "agent"], sub: str,
         with conn.cursor() as cur:
             cur.execute("SELECT set_config('statement_timeout', %s, true)",
                         (str(statement_timeout_ms),))
-            cur.execute("SET LOCAL ROLE %s" % role)
+            # Parameterised like the GUCs below instead of interpolated into
+            # SQL text: set_config('role', ...) IS "SET LOCAL ROLE", so even an
+            # internal allowlist value never becomes query text.
+            cur.execute("SELECT set_config('role', %s, true)", (role,))
             cur.execute("SELECT set_config('app.sub', %s, true)",
                         (_validate_sub(sub),))
             cur.execute("SELECT set_config('app.role', %s, true)", (app_role,))
@@ -118,4 +121,4 @@ def close_pools() -> None:
     _pools.clear()
 
 
-__all__ = ["get_pool", "scoped_session", "service_session", "close_pools"]
+__all__ = ["close_pools", "get_pool", "scoped_session", "service_session"]

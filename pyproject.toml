@@ -16,18 +16,24 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Session",
 ]
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "pyjwt",
-    "cryptography",
-    "psycopg[binary]",
-    "psycopg-pool",
-    "python-multipart",
+    # Ranges express "any version whose MAJOR we have thought about". A bound
+    # that is never raised is fine; a dependency that silently jumps a major
+    # and takes CI red on an unrelated commit is not.
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "pyjwt>=2.8,<3",
+    # Deliberately uncapped. Our whole surface is generating an RSA key and
+    # (de)serialising PEM/JWKS, which has been stable for years, and refusing a
+    # security release because it is a new major would be the wrong trade.
+    "cryptography>=42",
+    "psycopg[binary]>=3.2,<4",
+    "psycopg-pool>=3.2,<4",
+    "python-multipart>=0.0.9,<1",
     "mcp>=1.19.0,<2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx", "build", "twine"]
+dev = ["pytest", "httpx", "build", "twine", "ruff", "mypy", "pip-audit"]
 
 [project.scripts]
 agctl = "aguard.cli:main"
@@ -56,4 +62,44 @@ include = ["aguard*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# --- lint / types: the gate that keeps the next defect out of review --------
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+# NOTE: `ruff format` is intentionally NOT enforced. This codebase is
+# hand-formatted deliberately (import groups carry arguments, comments sit
+# against the line they explain), and a formatter would rewrite 58 files to
+# buy nothing. `ruff check` is the gate; formatting is a review matter.
+
+[tool.ruff.lint]
+# Correctness first: the families that find real defects — unused
+# names/imports, undefined names, bugbear's footguns, pyupgrade's use of
+# APIs that were deprecated years ago, and refactor hints that are actually
+# about semantics. Deliberately NOT enabled, with reasons, so the omissions
+# are decisions rather than oversights:
+#   SIM117  nested `with` blocks are the clearest form in this codebase
+#           (33 sites of pool -> cursor); merging them costs readability
+#   E501    line length is a review matter, not a build failure
+#   ARG     unused route parameters (Request, Depends markers) are how
+#           FastAPI declares a dependency — they are unused ON PURPOSE
+select = ["E4", "E7", "E9", "F", "W", "B", "UP", "C4", "RUF", "I"]
+ignore = [
+    "B008",   # FastAPI's Depends()/Form() defaults ARE function calls
+    "E501",   # see above
+    "RUF012", # mutable class attributes are deliberate where they appear
+]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["aguard"]
+# Third-party stubs are not worth vendoring: every module here is annotated,
+# and what this gate is for is our OWN annotations being consistent.
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+# Unannotated defs stay out of scope rather than being flagged anonymously.
+disallow_untyped_defs = false
+check_untyped_defs = true
 

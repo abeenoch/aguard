@@ -108,7 +108,8 @@ python scripts/agctl.py verify     # redaction self-check, pass/fail
 python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
 python scripts/mcp_smoke.py        # real MCP client against a live server
 curl -s localhost:8000/readyz      # readiness: database + keystore
-pytest                             # 245 tests
+pytest                             # 246 tests
+ruff check . && mypy               # lint + types (also gates CI)
 ```
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
@@ -319,7 +320,7 @@ agctl --help                    # console script (see docs/RELEASING.md)
 
 ## Status
 
-Alpha. 245 tests green (unit + live-server smoke). Known limitations are
+Alpha. 246 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — authorization state defaults to
 in-memory (set `STORE_BACKEND=postgres` before running more than one worker),
 rate-limit counters have the same per-process caveat, and the MCP resource

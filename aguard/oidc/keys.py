@@ -65,7 +65,18 @@ class ManagedKey:
 
     @property
     def private_key(self) -> rsa.RSAPrivateKey:
-        return serialization.load_pem_private_key(self.pem.encode(), password=None)
+        """Parse the PEM, narrowed to RSA at RUNTIME rather than cast.
+
+        The keystore is a file on disk, so a non-RSA key (corruption, a stray
+        hand-edit, a future key type) must fail loudly here — not later as a
+        JWKS that nothing can verify against, or as a signature nobody
+        accepts.
+        """
+        key = serialization.load_pem_private_key(self.pem.encode(), password=None)
+        if not isinstance(key, rsa.RSAPrivateKey):
+            raise RuntimeError(
+                f"keystore key {self.kid[:8]}… is not an RSA private key")
+        return key
 
     def public_jwk(self) -> dict:
         """Public half as a JWK. Structurally cannot contain private members
