@@ -7,19 +7,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: ci-superuser-secret
-          POSTGRES_DB: agent_auth
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 3s
-          --health-timeout 3s
-          --health-retries 15
+    # Pinned instead of ubuntu-latest: that label is scheduled to move to
+    # Ubuntu 26, which would silently change the PostgreSQL version underneath
+    # us (our schema needs >= 15 for `security_invoker` views).
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -29,13 +20,40 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # PostgreSQL is installed HERE rather than via a `services:` container.
+      # A service container pulls its image from Docker Hub on every run, and
+      # hosted runners are routinely rate-limited as anonymous pullers: this
+      # job died at "Initialize containers" with
+      #   "Docker pull failed with exit code 1, back off 9.18 seconds ..."
+      # before a single line of our own code executed. The distro package has
+      # no such external dependency. (The alternative — keeping the container
+      # and authenticating with DOCKERHUB_USERNAME/DOCKERHUB_TOKEN secrets —
+      # trades this failure mode for a credential to rotate.)
+      - name: Start PostgreSQL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql
+          sudo service postgresql start
+          # The cluster authenticates the local socket by peer (hence
+          # `sudo -u postgres`), but our DSNs connect over TCP, so the
+          # superuser needs a password.
+          sudo -u postgres psql -v ON_ERROR_STOP=1 \
+            -c "ALTER USER postgres PASSWORD 'ci-superuser-secret';"
+          sudo -u postgres psql -tAc \
+            "SELECT 1 FROM pg_database WHERE datname = 'agent_auth'" \
+            | grep -q 1 \
+            || sudo -u postgres psql -c "CREATE DATABASE agent_auth;"
+          # Fail here, loudly, rather than inside the test run.
+          PGPASSWORD=ci-superuser-secret psql -h localhost -U postgres \
+            -d agent_auth -c "SELECT version();"
+
       - name: Install
         run: pip install -e ".[dev]"
 
       - name: Apply database schema
         env:
           PGPASSWORD: ci-superuser-secret
-        run: psql -h localhost -U postgres -d agent_auth -f aguard/db/schema.sql
+        run: psql -h localhost -U postgres -d agent_auth -v ON_ERROR_STOP=1 -f aguard/db/schema.sql
 
       - name: Run tests
         env:
