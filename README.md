@@ -192,10 +192,39 @@ python scripts/mcp_smoke.py               # terminal 2 — real MCP client SDK
 pytest tests/test_mcp_resource_server.py  # 10 tests, in-process, no network
 ```
 
+## See it work from the command line
+
+No dashboard, no browser session, no new attack surface. `scripts/agctl.py`
+reads the same tables through the same least-privilege session layer as the
+API:
+
+```bash
+# what the redactor does to PII — the redaction you can actually watch
+python scripts/agctl.py redact "call alice@example.com re card 4111 1111 1111 1111"
+#   -> call email[h:5fecc5cd0b92] re card ****-****-****-1111
+
+python scripts/agctl.py verify              # built-in self-check, pass/fail
+python scripts/agctl.py redact --file access.log   # redact a whole log file
+python scripts/agctl.py redact --json -     # structural walk, from stdin
+
+# the audit trail — rows=0 is where the database said no
+python scripts/agctl.py audit --limit 20
+python scripts/agctl.py audit --denied      # only refusals / no-ops
+python scripts/agctl.py export --format csv --out audit.csv
+```
+
+A row where an agent was refused and a human allowed the same operation, from
+a real run:
+
+```
+   id  ts                    subject       client       rows  statement
+    9  2026-10-09 22:04:08   usr_alice     demo-spa        1  MCP delete_document id=7
+    8  2026-10-09 22:04:07   usr_alice     chat-agent      0  MCP delete_document id=7
+```
 
 ## Status
 
-Alpha. 159 tests green (unit + live-server smoke). Known limitations are
+Alpha. 166 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — in-memory token stores (single
 process), no rate limiting yet, and the MCP resource server runs in-process
 with the AS (split into a separate service before any real deployment).
@@ -205,10 +234,16 @@ with the AS (split into a separate service before any real deployment).
 - **MCP Authorization Server** ✅ `RFC 8414`, `RFC 9728`, `RFC 8707`, `RFC 7591` (DCR)
 - `/userinfo`, `/revoke` (RFC 7009), `/introspect` (RFC 7662) ✅ — formerly advertised, now real
 - **MCP resource server** at `/mcp` ✅ — Streamable HTTP, audience-bound tokens, DB-enforced tools
-- **Operator surface** 📐 design settled in [docs/DESIGN.md](docs/DESIGN.md) (agent activity view, operator DB role, design language) — order of operations: role → data → screen
+- **CLI observability** ✅ — `scripts/agctl.py`: redaction proof, audit trail, CSV/JSONL export
+- Restyle the auth pages (Jinja2 + design tokens) — see [docs/DESIGN.md](docs/DESIGN.md) → E1
+- Move users/clients out of Python constants into Postgres → E2
+- Index `agent_audit`; add `org_id` → E3
 - Split the resource server into its own deployable service (own port, own container)
 - `docker compose up` one-command install
-- OpenTelemetry/Langfuse export of *redacted* traces
+
+A browser dashboard was considered and **cancelled** — it is a new privileged
+surface spanning tenants, i.e. the one screen that could undermine the
+guarantee. The reasoning is recorded in [docs/DESIGN.md](docs/DESIGN.md) §3.0.
 
 ## Contributing
 

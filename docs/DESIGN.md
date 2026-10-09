@@ -1,16 +1,18 @@
 # A-guard — interface & operator-surface design
 
-**Status:** draft for review · **Supersedes:** nothing · **Blocks:** any UI work
+**Status:** revision 2 — the web operator surface is cancelled (see §3.0)
 
-This document exists to settle three things *before* code is written, because
-two of them are security decisions wearing product clothes:
+This document settles three things *before* code is written, because two of
+them are security decisions wearing product clothes:
 
 1. **What surfaces exist** — and what is deliberately out of scope.
 2. **The operator role** — who may see agent activity, and how the database
    enforces it.
 3. **The design language** — the constraints the visuals must live inside.
 
-Nothing here is implemented yet. Sections marked **DECISION NEEDED** are open.
+**Revision 2:** a read-only browser dashboard was designed, then cancelled.
+Observability now ships as CLI commands and log export (§3.2), implemented in
+`scripts/agctl.py`. §3.0 records the reasoning rather than deleting it.
 
 ---
 
@@ -56,40 +58,66 @@ wrong even if it looks good.
 
 ## 3. Surfaces
 
+### 3.0 Direction change — no web operator surface
+
+A read-only browser dashboard was the original plan. It is **cancelled**, for
+reasons that are exactly what P1 was written to catch:
+
+- **It is a new privileged surface.** The view spans actors, so it cannot be
+  governed by the per-tenant RLS policy on `documents`. It needs its own auth
+  and an operator role — and getting that wrong creates the single screen that
+  leaks across tenants: the product's own failure mode.
+- **The need is observability, not a UI.** What people actually want to see is
+  that *redaction works* and *what the database refused*. Both are reachable
+  from a terminal, with no new attack surface and no new authentication story.
+- **It would have been built on data that does not exist yet** (§5) — the audit
+  table has no read path, and users/clients are code constants.
+
+So observability ships as **CLI commands + export** (§3.2).
+
 ### 3.1 Authentication pages — *restyle, keep*
 
 `login`, `consent`, `error`, `callback` (currently `app/oidc/pages.py`).
 
 - **Audience:** every human using any OAuth/OIDC or MCP client. This is the
   highest-traffic user-facing surface the project has.
-- **Why it matters more than a dashboard:** it is already shipped and
-  unavoidable; polish here benefits every user of every client.
+- **Why it matters:** it is already shipped and unavoidable; polish here
+  benefits every user of every client.
 - Constraint: no inline scripts; all interpolated values escaped (today
   hand-rolled via `html.escape`, moving to autoescaping templates — §6.1).
 
-### 3.2 Agent Activity — *new, narrow, read-only*
+### 3.2 Agent activity & redaction proof — *CLI, shipped*
 
-- **Audience:** the operator of this deployment.
-- **Shows:** recent agent/human operations across the deployment — actor
-  (`sub`), client (`client_id`), request id, the operation, rows returned, and
-  **refusals** (the interesting rows).
-- **Does not show:** raw tokens, client secrets, un-redacted statements,
-  document bodies. (Statements are already redacted *at write time* — see
-  §5.3 — so the view is inherently safe to render.)
-- **Read-only.** No mutation of anything, ever. Any admin action is a separate
-  surface with its own design.
+`scripts/agctl.py`:
 
-### 3.3 Explicitly out of scope (now)
+- `agctl redact …` / `agctl redact --file app.log` — show what the redactor
+  does to a string, a JSON object, or a whole log file (stdin-capable).
+- `agctl verify` — built-in redaction self-check with pass/fail output.
+- `agctl audit [--sub S] [--denied] [--json]` — the audit trail, newest first.
+- `agctl export [--format jsonl|csv] [--out F]` — dump it for shipping.
 
-Client/user CRUD, key rotation UI, settings, alerting, real-time streaming,
-charts, multi-tenant switching. Rationale: none of these improve the guarantee,
-several are unbuildable today, and all of them expand blast radius.
+- **Audience:** the operator/developer, on a host that already has database
+  credentials. No browser, no session, no new auth surface.
+- **Shows:** actor (`sub`), client (`client_id`), request id, the operation,
+  rows affected, and the **refusals** (`--denied`).
+- **Does not show:** raw tokens, client secrets, un-redacted statements.
+  Statements are redacted *at write time* (§5.3), so the CLI renders stored
+  text as-is.
+- **Read-only.** It never mutates the trail.
 
-| Surface | Audience | Reads | Writes | Phase |
+### 3.3 Explicitly out of scope
+
+Any browser-based operator UI (cancelled, §3.0), client/user CRUD, key rotation
+UI, settings, alerting, real-time streaming, charts, multi-tenant switching.
+Rationale: none improve the guarantee, and all of them expand blast radius.
+
+| Surface | Audience | Reads | Writes | Status |
 |---|---|---|---|---|
-| Auth pages | any end user | — | consent | E1 |
-| Agent Activity | operator | `agent_audit`, `documents` | nothing | E4 |
-| Client/user admin | operator | clients, users | clients, users | **not scheduled** |
+| Auth pages | any end user | — | consent | shipped; restyle pending (E1) |
+| Redaction proof (CLI) | operator/dev | — | nothing | **shipped** |
+| Agent activity (CLI) | operator | `agent_audit` | nothing | **shipped** |
+| Web dashboard | — | — | — | **cancelled** |
+| Client/user admin | operator | clients, users | clients, users | not scheduled |
 
 ---
 
@@ -279,12 +307,17 @@ database rather than a file.
 
 Recorded so the boundary is a decision, not an omission:
 
-React/Vue/Vite or any build step · real-time streaming (SSE/WebSocket) ·
-charting libraries · alerting/notifications · CSV/JSON export · client secret
-rotation UI · multi-tenant org switching · theming/dark mode · i18n.
+A browser-based operator dashboard (§3.0) · any JS build step (React/Vue/Vite)
+· real-time streaming (SSE/WebSocket) · charting libraries ·
+alerting/notifications · client-secret rotation UI · multi-tenant org switching
+· theming/dark mode · i18n.
 
 Each is defensible *later*. None improves the guarantee now, and several
 conflict with P4.
+
+**Correction:** CLI export (`--format jsonl|csv`) is *in* scope and shipped. An
+earlier revision listed "CSV/JSON export" here by mistake — "let people take
+their logs" is a legitimate need, not scope creep.
 
 ---
 
@@ -292,17 +325,17 @@ conflict with P4.
 
 | Phase | Work | Depends on | Why here |
 |---|---|---|---|
-| **E1** | Design foundation: Jinja2 + autoescaping, `/static` CSS with tokens, restyle the 4 auth pages, add CSP header | — | Highest-traffic surface; removes an XSS footgun; zero new product risk |
-| **E2** | Move `users` + `clients` into Postgres, seed current fixtures | — | Unblocks operator accounts and any admin surface |
-| **E3** | `agent_audit` read path: indexes + `org_id` decision (§4.5) + paginated query | E2 (optional) | Makes the log usable and cheap to read |
-| **E4** | `operator` capability class → `app_login_operator` / `operator_readonly` (§4.2), operator sign-in | E2 | The security decision lands *before* the screen |
-| **E5** | Agent Activity view (read-only) | E3, E4 | The visible payoff |
-| **E6** | Client/user admin — only if it earns its place | E2 | Deliberately unscheduled |
+| **E1** | Design foundation: Jinja2 + autoescaping, `/static` CSS with tokens, restyle the 4 auth pages, CSP header | — | Highest-traffic user surface; removes an XSS footgun; zero product risk |
+| **E2** | Move `users` + `clients` into Postgres, seed current fixtures | — | Today they are code constants and cannot be listed or rotated without a redeploy |
+| **E3** | `agent_audit` read path: indexes + `org_id` (§4.5) | — | The CLI already reads this table; without indexes, paging degrades exactly when the log is largest |
+| **E4** | ~~`operator` capability + `operator_readonly` role~~ | — | **Deferred.** With no web surface the CLI runs with deployer credentials. Revisit only if a hosted/remote operator view returns |
+| **E5** | CLI observability: `agctl redact\|verify\|audit\|export` | — | **Done** — this is what replaced the dashboard |
+| **E6** | Client/user admin UI | E2 | Still unscheduled, and now unlikely to be worth it |
 
-Note the ordering principle: **the DB role and the data land before the
-screen.** Building the view first would force permissions into application
-code, which is the exact failure mode this project exists to demonstrate
-against.
+The ordering principle holds, restated for a CLI: **role and data land before
+the surface that reads them.** The CLI reads the same tables, through the same
+least-privilege session layer, as the API — it does not invent its own path to
+the data.
 
 ---
 
@@ -310,12 +343,13 @@ against.
 
 | # | Decision | Status | Resolution |
 |---|---|---|---|
-| D1 | Operator isolation | ✅ decided | Dedicated `operator_readonly` role + `app_login_operator` login (§4.2 option A) |
-| D2 | Tenant model of the view | ✅ decided | Add `org_id` to `agent_audit` in E3, while the table is small |
+| D1 | Operator isolation | ⏸ deferred | Would have needed `operator_readonly` + `app_login_operator`. With no web surface, the CLI runs with deployer credentials — revisit only if a hosted operator view returns |
+| D2 | Tenant model of the audit trail | ✅ decided | Add `org_id` to `agent_audit` in E3 — the CLI reads across subjects, so this stays the right boundary |
 | D3 | Product name | ✅ done | **a-guard** — applied to package, pages, logger names, and default `aud` |
 | D4 | Auth-page visual direction | open | minimal / utilitarian (**P4**) |
-| D5 | Operator sign-in | open | reuse `/login` + session with an `operator` capability (§4.3) |
+| D5 | Operator sign-in | ⏸ moot | No web operator surface to sign into (§3.0) |
 | D6 | Database name | open | **keep `agent_auth`** (default) · rename to `a_guard` — requires a coordinated `ALTER DATABASE` plus updates to `settings.py`, `schema.sql`, CI, compose, and three test files |
+| D7 | Operator surface | ✅ done | **CLI + export** (`scripts/agctl.py`), not a browser dashboard (§3.0) |
 
 D6 is deliberately *not* bundled with D3: the product rename touched files,
 whereas the DB rename mutates a running database — and the local Postgres is a
@@ -326,9 +360,14 @@ not a refactor.
 
 ## 10. What this document does *not* claim
 
-- It does not claim the activity view is safe to build today — it is not,
-  until §5 lands.
+- It does not claim the audit trail is cheap to read yet — §5.1 (indexes) still
+  stands, and the CLI reads that table.
 - It does not redesign the API or the OIDC surface.
 - It does not commit to a timeline. It commits to an order of operations:
-  **role → data → screen.**
+  **role → data → surface.**
+- **The CLI is not a privilege boundary.** It runs on a host that already holds
+  database credentials and reads `agent_audit`, which carries no RLS (it is the
+  cross-actor record). That is appropriate for a deployer-run tool and would not
+  be appropriate exposed as a network service — which is precisely why it is a
+  CLI and not a dashboard.
 

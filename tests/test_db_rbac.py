@@ -22,8 +22,32 @@ BOB = "usr_bob"
 
 @pytest.fixture(scope="module", autouse=True)
 def _pools():
+    _seed_rows()
     yield
     close_pools()
+
+
+def _seed_rows() -> None:
+    """Seed one row per tenant.
+
+    These tests assert on *existing* rows, so without this they silently
+    depended on data left behind by whichever module ran last — a latent
+    ordering dependency that surfaced when another test module re-applied
+    schema.sql mid-suite.
+    """
+    try:
+        for sub in (ALICE, BOB):
+            with scoped_session(kind="human", sub=sub) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT count(*) FROM documents WHERE owner_sub = %s",
+                        (sub,))
+                    if cur.fetchone()[0] == 0:
+                        cur.execute(
+                            "INSERT INTO documents(owner_sub, title, body) "
+                            "VALUES (%s, %s, %s)", (sub, "seed-title", "seed-body"))
+    except psycopg.errors.UndefinedTable:
+        pytest.skip("documents table missing — apply app/db/schema.sql first")
 
 
 def _fetch(kind, sub, sql, params=(), role_override=None):
