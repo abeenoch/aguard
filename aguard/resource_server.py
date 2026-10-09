@@ -19,11 +19,14 @@ it. That is the MCP spec's discovery path, and it costs one header.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
 import jwt as pyjwt
 from fastapi import HTTPException, Request
+
+log = logging.getLogger("a-guard.resource-server")
 
 DEFAULT_LEEWAY = 60
 _ALGORITHM = "RS256"
@@ -114,11 +117,19 @@ class ResourceServerGuard:
         )
 
     def verify_request(self, request: Request) -> dict:
-        """Claims for the request, or raise HTTPException(401)."""
+        """Claims for the request, or raise HTTPException(401).
+
+        The challenge detail is GENERIC even though TokenError carries the
+        specific reason: a 401 is read by an unauthenticated caller, and
+        "could not verify token: <jwks url> ..." leaks our internals and our
+        network topology. The reason goes to the log instead. verify() still
+        raises it in full for library callers that want it.
+        """
         try:
             return self.verify(self.bearer_token(request))
         except TokenError as exc:
-            raise self.challenge(str(exc)) from None
+            log.info("rejecting bearer token: %s", exc)
+            raise self.challenge("invalid or expired token") from None
 
     def dependency(self) -> Callable[[Request], dict]:
         """A FastAPI dependency: `Depends(guard.dependency())`."""

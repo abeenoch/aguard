@@ -3,10 +3,12 @@ plus the previously-advertised-but-missing /userinfo, /revoke, /introspect."""
 from __future__ import annotations
 
 import base64
+import dataclasses
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
+import aguard.oidc.routes_revocable as routes_revocable
 from aguard.main import app
 from aguard.oidc.pkce import challenge_s256, generate_verifier
 from aguard.oidc.validation import verify_access_token
@@ -223,6 +225,22 @@ def _human_tokens(scope="openid email orders:read") -> dict:
     return r.json()
 
 
+CONF_CLIENT = "demo-conf"
+CONF_SECRET = "demo-conf-secret"        # dev fixture, seeded in clients.py
+
+
+def _conf_tokens(scope="openid email orders:read") -> dict:
+    """Tokens issued to demo-conf — the confidential client that, unlike a
+    public one, can actually prove WHO it is at /introspect."""
+    code, verifier = _code(client_id=CONF_CLIENT, scope=scope)
+    r = client.post("/token", data={
+        "grant_type": "authorization_code", "code": code,
+        "redirect_uri": REDIRECT, "code_verifier": verifier,
+    }, headers=_basic(CONF_CLIENT, CONF_SECRET))
+    assert r.status_code == 200, r.text[:300]
+    return r.json()
+
+
 def test_userinfo_returns_identity():
     tokens = _human_tokens()
     r = client.get("/userinfo",
@@ -239,6 +257,26 @@ def test_userinfo_rejects_garbage():
                    headers={"Authorization": "Bearer garbage-token"})
     assert r.status_code == 401
     assert client.get("/userinfo").status_code == 401
+
+
+def test_error_bodies_do_not_leak_internals():
+    """M8: every one of these endpoints knows the exact failure reason (bad
+    kid, expired, malformed segment, audience mismatch). That is internal
+    state: the caller gets a flat answer and the (redacted) log gets the
+    detail. Pinned as a list of words that must never reach a response body."""
+    leaked = ("kid", "signature", "malformed", "segment", "decode", "jwks",
+              "audience", "issuer", "expired")
+
+    r = client.get("/userinfo", headers={"Authorization": "Bearer garbage-token"})
+    assert r.status_code == 401
+    body = r.text.lower()
+    assert not any(word in body for word in leaked), body
+
+    # The API answers the same way for a malformed token as for a forged one:
+    # one flat detail, so the body cannot be used to probe why it failed.
+    r2 = client.get("/api/documents", headers={"Authorization": "Bearer garbage"})
+    assert r2.status_code == 401
+    assert r2.json() == {"detail": "invalid token"}
 
 
 def test_revoke_refresh_kills_family():
@@ -267,33 +305,83 @@ def test_revoke_unknown_token_still_200():
 
 
 def test_introspect_active_token():
-    tokens = _human_tokens()
-    r = client.post("/introspect", data={
-        "client_id": "demo-spa", "token": tokens["access_token"],
-    })
+    tokens = _conf_tokens()
+    r = client.post("/introspect", data={"token": tokens["access_token"]},
+                    headers=_basic(CONF_CLIENT, CONF_SECRET))
     assert r.status_code == 200
     body = r.json()
     assert body["active"] is True
     assert body["sub"] == "usr_alice"
     assert "openid" in body["scope"]
+    assert body["client_id"] == CONF_CLIENT
 
 
 def test_introspect_garbage_is_inactive():
-    r = client.post("/introspect", data={
-        "client_id": "demo-spa", "token": "garbage",
-    })
+    r = client.post("/introspect", data={"token": "garbage"},
+                    headers=_basic(CONF_CLIENT, CONF_SECRET))
     assert r.status_code == 200
     assert r.json() == {"active": False}
 
 
 def test_introspect_sees_refresh_token():
-    tokens = _human_tokens()
+    tokens = _conf_tokens()
     r = client.post("/introspect", data={
-        "client_id": "demo-spa",
         "token": tokens["refresh_token"],
         "token_type_hint": "refresh_token",
-    })
+    }, headers=_basic(CONF_CLIENT, CONF_SECRET))
     assert r.status_code == 200
     body = r.json()
     assert body["active"] is True
     assert body["token_type"] == "refresh_token"
+
+
+def test_introspect_requires_client_authentication():
+    """RFC 7662 §2.1 requires authentication here to prevent token SCANNING.
+    A public client authenticates by name alone, so accepting one would let
+    anybody name demo-spa and start probing token values."""
+    tokens = _human_tokens()                    # issued to demo-spa (public)
+    r = client.post("/introspect", data={"client_id": "demo-spa",
+                                         "token": tokens["access_token"]})
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_client"
+    # and it must not be distinguishable from a client that does not exist
+    r2 = client.post("/introspect", data={"client_id": "no-such-client",
+                                          "token": tokens["access_token"]})
+    assert r2.status_code == r.status_code == 401
+    assert r2.json() == r.json()
+
+
+def test_introspect_refuses_another_clients_token():
+    """cli-agent holds valid credentials, but the token is not its business."""
+    tokens = _conf_tokens()
+    r = client.post("/introspect", data={"token": tokens["access_token"]},
+                    headers=_basic("cli-agent", "cli-agent-secret"))
+    assert r.status_code == 200
+    # identical to the unknown-token answer: nothing reveals whose token it is
+    assert r.json() == {"active": False}
+
+
+def test_introspection_can_be_delegated_explicitly(monkeypatch):
+    """A resource server or ops tool must be NAMED in INTROSPECTION_CLIENTS;
+    token visibility is never granted implicitly."""
+    tokens = _conf_tokens()
+    monkeypatch.setattr(routes_revocable, "settings", dataclasses.replace(
+        routes_revocable.settings, introspection_clients=("cli-agent",)))
+    r = client.post("/introspect", data={"token": tokens["access_token"]},
+                    headers=_basic("cli-agent", "cli-agent-secret"))
+    assert r.status_code == 200
+    assert r.json()["active"] is True
+
+
+def test_revoke_refuses_another_clients_token():
+    tokens = _conf_tokens()
+    rt = tokens["refresh_token"]
+    r = client.post("/revoke", data={"token": rt},
+                    headers=_basic("cli-agent", "cli-agent-secret"))
+    assert r.status_code == 200              # never an oracle
+
+    # ...and the family is untouched: its owner can still rotate it
+    r2 = client.post("/token", data={"grant_type": "refresh_token",
+                                     "refresh_token": rt},
+                     headers=_basic(CONF_CLIENT, CONF_SECRET))
+    assert r2.status_code == 200, r2.text[:300]

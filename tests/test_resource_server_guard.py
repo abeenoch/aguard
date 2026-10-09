@@ -123,6 +123,20 @@ def test_missing_bearer_is_401_with_discovery(guard):
     assert "/.well-known/oauth-protected-resource" in err.headers["WWW-Authenticate"]
 
 
+def test_bad_token_is_401_detail_does_not_leak_internals(guard):
+    """A 401 is read by an unauthenticated caller, so the failure REASON
+    (audience mismatch, unknown kid, JWKS unreachable) must not appear in it —
+    it identifies our internals and our topology. It goes to the log."""
+    foreign = _token(aud=settings.resource_audience)   # valid sig, wrong aud
+    with pytest.raises(HTTPException) as excinfo:
+        guard.verify_request(_StubRequest({"authorization": f"Bearer {foreign}"}))
+    err = excinfo.value
+    assert err.status_code == 401
+    assert "resource_metadata=" in err.headers["WWW-Authenticate"]
+    detail = str(err.detail).lower()
+    assert detail == "invalid or expired token", detail
+
+
 def test_bad_token_is_401(guard):
     with pytest.raises(HTTPException) as excinfo:
         guard.verify_request(_StubRequest({"authorization": "Bearer nope"}))

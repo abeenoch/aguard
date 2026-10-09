@@ -192,6 +192,17 @@ class Settings:
     # is what the test suite uses so probes cannot leak between tests.
     readyz_cache_seconds: float = float(_env("READYZ_CACHE_SECONDS", "1.0"))
 
+    # Clients allowed to introspect tokens they do NOT own (RFC 7662 §2.4).
+    # EMPTY BY DEFAULT, so introspection is owner-only. A resource server or an
+    # ops tool that legitimately needs to inspect arbitrary tokens must be
+    # named here. Only ever list CONFIDENTIAL clients: a public client
+    # authenticates by name alone, so allowlisting one would reopen the hole
+    # this restriction exists to close.
+    introspection_clients: tuple[str, ...] = tuple(
+        c.strip() for c in _env("INTROSPECTION_CLIENTS", "").split(",")
+        if c.strip()
+    )
+
     # DCR redirect-URI policy. Default is the strict OAuth 2.1 baseline:
     # https anywhere, http on loopback only (RFC 8252 for native apps).
     # MCP hosts that are editor extensions register a PRIVATE-USE scheme

@@ -116,6 +116,25 @@ def test_revocation_and_unknown_token(backend):
     assert store.revoke_by_raw("unknown-token") is False   # no validity oracle
 
 
+def test_owner_of_reports_the_issuing_client_in_every_state(backend):
+    """Revocation must work on a token the client has already rotated AWAY
+    from (that is the post-theft case), so ownership has to be readable in
+    every state. It answers only ownership — never usability — so it is not a
+    validity oracle."""
+    store = REFRESHERS[backend]()
+    raw, _ = store.issue(client_id="demo-spa", subject="usr_alice", scope="openid")
+    assert store.owner_of(raw) == "demo-spa"
+    assert store.owner_of("unknown-token") is None
+
+    raw2, _ = store.rotate(raw, client_id="demo-spa")
+    assert store.owner_of(raw) == "demo-spa"        # retired, still owned
+    assert store.owner_of(raw2) == "demo-spa"
+
+    store.revoke_by_raw(raw2)
+    assert store.peek(raw2) is None                 # revoked: no longer usable...
+    assert store.owner_of(raw2) == "demo-spa"       # ...ownership is unchanged
+
+
 def test_wrong_client_is_not_a_family_kill(backend):
     store = REFRESHERS[backend]()
     raw, _ = store.issue(client_id="demo-spa", subject="usr_alice", scope="openid")

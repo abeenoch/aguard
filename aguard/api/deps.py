@@ -9,6 +9,7 @@ redaction layer treats any accidental echo as a secret.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
@@ -16,6 +17,8 @@ from fastapi import HTTPException, Request
 from aguard.oidc.claims import roles_from_claims
 from aguard.oidc.keys import KeyManager
 from aguard.oidc.validation import TokenValidationError, verify_access_token
+
+log = logging.getLogger("a-guard.api")
 
 
 @dataclass(frozen=True)
@@ -38,8 +41,12 @@ def require_principal(request: Request) -> Principal:
     try:
         claims = verify_access_token(raw, keys=keys)
     except TokenValidationError as exc:
-        raise HTTPException(status_code=401,
-                            detail=f"invalid token: {exc}") from None
+        # Minimal disclosure: the reason (expired, unknown kid, audience
+        # mismatch, bad signature) describes OUR internals. It goes to the
+        # (redacted) log; the caller gets a flat 401. 401 vs 403 stays exact —
+        # that distinction is the API contract, not a secret.
+        log.info("rejected bearer token: %s", exc)
+        raise HTTPException(status_code=401, detail="invalid token") from None
     # Capability class from the claim, failing SAFE when it is absent (see
     # aguard/oidc/claims.py) — a missing `roles` must not mean "human".
     return Principal(

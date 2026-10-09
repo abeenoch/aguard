@@ -71,6 +71,17 @@ class RefreshTokenStore(Protocol):
 
     def revoke_by_raw(self, raw: str) -> bool: ...
 
+    def owner_of(self, raw: str) -> str | None:
+        """The client_id this token was issued to, or None if unknown.
+
+        Reads ANY record — live, retired, revoked or expired — because
+        revocation must work on a token the client has already rotated away
+        from, which is precisely the case after a theft. It answers WHO owns
+        the token and never whether it is still usable, so it is not a
+        validity oracle. Used to stop one client revoking another's family.
+        """
+        ...
+
     def peek(self, raw: str) -> RefreshRecord | None: ...
 
 
@@ -160,6 +171,11 @@ class InMemoryRefreshTokenStore:
             return False
         self._revoke_family(record.family_id)
         return True
+
+    def owner_of(self, raw: str) -> str | None:
+        """Owning client_id of any record, regardless of state."""
+        record = self._by_hash.get(_hash(raw)) if raw else None
+        return record.client_id if record is not None else None
 
     def peek(self, raw: str) -> RefreshRecord | None:
         """RFC 7662 introspection view: valid, unrevoked record or None.
@@ -270,6 +286,18 @@ class PostgresRefreshTokenStore:
                 cur.execute("UPDATE refresh_tokens SET revoked = true"
                             " WHERE family_id = %s", (row[0],))
                 return True
+
+    def owner_of(self, raw: str) -> str | None:
+        """Owning client_id of any record, regardless of state."""
+        from aguard.db.session import service_session
+        if not raw:
+            return None
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT client_id FROM refresh_tokens"
+                            " WHERE token_hash = %s", (_hash(raw),))
+                row = cur.fetchone()
+        return row[0] if row is not None else None
 
     def peek(self, raw: str) -> RefreshRecord | None:
         from aguard.db.session import service_session
