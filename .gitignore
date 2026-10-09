@@ -9,8 +9,8 @@ build/
 # --- secrets: NEVER commit ---
 .env
 
-# --- signing keys: NEVER commit ---
-data/keys/
+# --- signing keys / local runtime data: NEVER commit ---
+data/
 
 # --- runtime artifacts ---
 *.log
