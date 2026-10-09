@@ -43,11 +43,16 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+# Issuer used to derive resource identifiers (RFC 8707) before Settings exists.
+_ISSUER = _env("OIDC_ISSUER", "http://localhost:8000").rstrip("/")
+_MCP_RESOURCE_ID = _env("MCP_RESOURCE_ID", f"{_ISSUER}/mcp").rstrip("/")
+
+
 @dataclass(frozen=True)
 class Settings:
     # Public issuer URL — the `iss` claim. Exact string match matters later:
     # validators compare this byte-for-byte, so no trailing-slash drift.
-    issuer: str = _env("OIDC_ISSUER", "http://localhost:8000").rstrip("/")
+    issuer: str = _ISSUER
 
     # Where the RSA keystore (keys.json) lives.
     key_dir: Path = Path(_env("KEY_DIR", str(PROJECT_ROOT / "data" / "keys")))
@@ -92,6 +97,19 @@ class Settings:
     # this API is rejected by any other service that checks `aud` — kills
     # cross-service token replay even with a valid signature.
     resource_audience: str = _env("RESOURCE_AUDIENCE", "agent-auth-lab-api")
+
+    # RFC 8707 (resource indicators) — the MCP-compliance piece.
+    # mcp_resource_id is what clients pass as `resource` to get tokens
+    # audience-bound to the MCP server; allowed_resources is the EXACT-MATCH
+    # allowlist of resource values we accept (no wildcards — an unvalidated
+    # resource param is an audience-forgery vector).
+    mcp_resource_id: str = _MCP_RESOURCE_ID
+    allowed_resources: tuple[str, ...] = tuple(
+        r.strip() for r in _env(
+            "ALLOWED_RESOURCES",
+            f"{_MCP_RESOURCE_ID},{_ISSUER}/api",
+        ).split(",") if r.strip()
+    )
 
 
 

@@ -16,8 +16,11 @@ from app.api.routes import router as api_router
 from app.oidc.clients import seed_registry
 from app.oidc.codes import AuthCodeStore
 from app.oidc.keys import KeyManager
+from app.oidc.metadata import router as metadata_router
 from app.oidc.refresh import RefreshTokenStore
 from app.oidc.routes_auth import router as auth_router
+from app.oidc.routes_register import router as register_router
+from app.oidc.routes_revocable import router as revocable_router
 from app.oidc.routes_token import router as token_router
 from app.redact.logging import install as install_redaction
 from app.settings import settings
@@ -64,6 +67,9 @@ def create_app() -> FastAPI:
 
     application.include_router(auth_router)
     application.include_router(token_router)
+    application.include_router(metadata_router)
+    application.include_router(register_router)
+    application.include_router(revocable_router)
     application.include_router(api_router)
 
     @application.get("/healthz")
@@ -74,46 +80,6 @@ def create_app() -> FastAPI:
     def jwks() -> dict:
         # Public keys only — ManagedKey.public_jwk() structurally omits `d`.
         return keys.jwks
-
-    @application.get("/.well-known/openid-configuration")
-    def discovery() -> dict:
-        issuer = settings.issuer
-        return {
-            "issuer": issuer,
-            "authorization_endpoint": f"{issuer}/authorize",
-            "token_endpoint": f"{issuer}/token",
-            "userinfo_endpoint": f"{issuer}/userinfo",
-            "jwks_uri": f"{issuer}/jwks",
-            "introspection_endpoint": f"{issuer}/introspect",
-            "revocation_endpoint": f"{issuer}/revoke",
-            "response_types_supported": ["code"],
-            "grant_types_supported": [
-                "authorization_code",
-                "refresh_token",
-                "client_credentials",
-            ],
-            "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": ["RS256"],
-            # "plain" deliberately absent: PKCE downgrade to S256->plain is
-            # forbidden by OAuth 2.1; advertise only what we enforce.
-            "code_challenge_methods_supported": ["S256"],
-            "token_endpoint_auth_methods_supported": [
-                "client_secret_basic",
-                "client_secret_post",
-                "none",
-            ],
-            "scopes_supported": [
-                "openid",
-                "profile",
-                "email",
-                "orders:read",
-                "orders:write",
-                "agents:read",
-            ],
-            "claims_supported": [
-                "sub", "iss", "aud", "exp", "iat", "email", "roles", "amr",
-            ],
-        }
 
     return application
 

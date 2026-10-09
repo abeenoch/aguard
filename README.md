@@ -123,10 +123,8 @@ progress.
 
 ## Roadmap
 
-- **MCP Authorization Server** — OAuth 2.1 + PKCE compliance for Model
-  Context Protocol (`RFC 8414` ✅, `RFC 9728`/`8707`/`7591` next)
-- `/userinfo`, `/revoke`, `/introspect` — discovery advertises them; the
-  endpoints must exist (we don't lie about our own capabilities)
+- **MCP Authorization Server** ✅ `RFC 8414`, `RFC 9728`, `RFC 8707`, `RFC 7591` (DCR)
+- `/userinfo`, `/revoke` (RFC 7009), `/introspect` (RFC 7662) ✅ — formerly advertised, now real
 - `docker compose up` one-command install
 - OpenTelemetry/Langfuse export of *redacted* traces
 

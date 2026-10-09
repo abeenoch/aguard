@@ -60,6 +60,7 @@ def consent_form(
     code_challenge_method: str,
     nonce: str | None,
     user_label: str,
+    resource: str | None = None,
 ) -> str:
     scope_items = "".join(
         f"<li><code>{escape(s)}</code></li>" for s in scope.split()
@@ -67,6 +68,10 @@ def consent_form(
     nonce_field = (
         f'<input type="hidden" name="nonce" value="{escape(nonce)}">'
         if nonce else ""
+    )
+    resource_field = (
+        f'<input type="hidden" name="resource" value="{escape(resource)}">'
+        if resource else ""
     )
     return f"""<!doctype html>
 <html><head><title>Authorize — agent-auth-lab</title></head>
@@ -86,6 +91,7 @@ def consent_form(
     <input type="hidden" name="code_challenge_method"
            value="{escape(code_challenge_method)}">
     {nonce_field}
+    {resource_field}
     <button name="decision" value="approve">Approve</button>
     <button name="decision" value="deny">Deny</button>
   </form>

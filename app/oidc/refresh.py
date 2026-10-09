@@ -128,6 +128,28 @@ class RefreshTokenStore:
             if record.family_id == family_id:
                 record.revoked = True
 
+    def revoke_by_raw(self, raw: str) -> bool:
+        """RFC 7009 revocation: kill the family owning this refresh token.
+
+        Returns True if a family was revoked. Unknown tokens are a silent
+        no-op — no validity oracle (RFC 7009 §2.2)."""
+        record = self._by_hash.get(_hash(raw)) if raw else None
+        if record is None:
+            return False
+        self._revoke_family(record.family_id)
+        return True
+
+    def peek(self, raw: str) -> RefreshRecord | None:
+        """RFC 7662 introspection view: valid, unrevoked record or None.
+
+        Read-only — unlike rotate() it never consumes the token."""
+        record = self._by_hash.get(_hash(raw)) if raw else None
+        if record is None or record.revoked or record.retired:
+            return None
+        if record.expires_at < time.time():
+            return None
+        return record
+
     def _gc(self) -> None:
         now = time.time()
         dead = [

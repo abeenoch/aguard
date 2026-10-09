@@ -104,12 +104,17 @@ def _authenticate_client(
 
 def _mint_access_token(
     keys: KeyManager, *, sub: str, scope: str, client_id: str, roles: list[str],
+    audience: str | None = None,
 ) -> str:
     now = int(time.time())
     return keys.sign({
         "iss": settings.issuer,
         "sub": sub,
-        "aud": settings.resource_audience,   # audience-restricted
+        # RFC 8707: aud = the resource the client requested (validated at
+        # both endpoints), else the default API audience. Audience binding
+        # is what kills cross-service token replay — MCP servers MUST check
+        # that aud names them, and reject everything else.
+        "aud": audience or settings.resource_audience,
         "iat": now,
         "exp": now + settings.access_token_ttl,
         "jti": uuid.uuid4().hex,             # unique id -> future denylist/replay logs
@@ -146,6 +151,19 @@ def _roles_for(client: Client) -> list[str]:
     return ["agent"] if client.kind == "agent" else ["human"]
 
 
+def _validate_resource(resource: str | None) -> tuple[str | None, JSONResponse | None]:
+    """RFC 8707 gate shared by all grants: None passes through (default
+    audience later); anything else must be on the exact-match allowlist —
+    `invalid_target` otherwise (the RFC 8707 §2.2 error code)."""
+    if resource is None:
+        return None, None
+    if resource in settings.allowed_resources:
+        return resource, None
+    return None, _error(400, "invalid_target",
+                        "resource is not a registered resource of this "
+                        "authorization server")
+
+
 @router.post("/token")
 def token_endpoint(
     request: Request,
@@ -157,6 +175,7 @@ def token_endpoint(
     scope: str | None = Form(None),
     client_id: str | None = Form(None),
     client_secret: str | None = Form(None),
+    resource: str | None = Form(None),   # RFC 8707: intended resource (aud)
 ) -> Response:
     registry: ClientRegistry = request.app.state.registry
     keys: KeyManager = request.app.state.keys
@@ -171,11 +190,13 @@ def token_endpoint(
     # ---- grant dispatch: exact allowlist, no fuzzy matching -------------
     if grant_type == "authorization_code":
         return _grant_authorization_code(request, client, keys,
-                                         code, redirect_uri, code_verifier)
+                                         code, redirect_uri, code_verifier,
+                                         resource)
     if grant_type == "refresh_token":
-        return _grant_refresh(request, client, keys, refresh_token, scope)
+        return _grant_refresh(request, client, keys, refresh_token, scope,
+                              resource)
     if grant_type == "client_credentials":
-        return _grant_client_credentials(client, keys, scope)
+        return _grant_client_credentials(client, keys, scope, resource)
     return _error(400, "unsupported_grant_type",
                   "grant_type must be authorization_code, refresh_token "
                   "or client_credentials")
@@ -184,6 +205,7 @@ def token_endpoint(
 def _grant_authorization_code(
     request: Request, client: Client, keys: KeyManager,
     code: str | None, redirect_uri: str | None, code_verifier: str | None,
+    resource: str | None,
 ) -> Response:
     if not code or not redirect_uri or not code_verifier:
         return _error(400, "invalid_request",
@@ -212,11 +234,25 @@ def _grant_authorization_code(
                             record.code_challenge_method):
         return _error(400, "invalid_grant", "PKCE verification failed")
 
+    # RFC 8707 reconciliation: the resource presented here MUST match the
+    # one bound at /authorize (a code can't be redirected to a different
+    # audience — that's cross-API token laundering). Absence at EITHER end
+    # is tolerated (legacy clients), mismatch is not.
+    if record.resource is not None and resource is not None \
+            and resource != record.resource:
+        return _error(400, "invalid_target",
+                      "resource does not match the authorization request")
+    audience, target_error = _validate_resource(
+        resource if resource is not None else record.resource)
+    if target_error is not None:
+        return target_error
+
     scope = record.scope
     resp: dict = {
         "access_token": _mint_access_token(
             keys, sub=record.subject, scope=scope,
             client_id=client.client_id, roles=_roles_for(client),
+            audience=audience,
         ),
         "token_type": "Bearer",
         "expires_in": settings.access_token_ttl,
@@ -242,9 +278,14 @@ def _grant_authorization_code(
 def _grant_refresh(
     request: Request, client: Client, keys: KeyManager,
     refresh_token: str | None, requested_scope: str | None,
+    resource: str | None,
 ) -> Response:
     if not refresh_token:
         return _error(400, "invalid_request", "refresh_token is required")
+
+    audience, target_error = _validate_resource(resource)
+    if target_error is not None:
+        return target_error
 
     store: RefreshTokenStore = request.app.state.refresh
     try:
@@ -270,6 +311,7 @@ def _grant_refresh(
         "access_token": _mint_access_token(
             keys, sub=record.subject, scope=granted_scope,
             client_id=client.client_id, roles=_roles_for(client),
+            audience=audience,
         ),
         "token_type": "Bearer",
         "expires_in": settings.access_token_ttl,
@@ -287,10 +329,15 @@ def _grant_refresh(
 
 
 def _grant_client_credentials(client: Client, keys: KeyManager,
-                              requested_scope: str | None) -> Response:
+                              requested_scope: str | None,
+                              resource: str | None) -> Response:
     if "client_credentials" not in client.grant_types:
         return _error(400, "unauthorized_client",
                       "client may not use client_credentials")
+
+    audience, target_error = _validate_resource(resource)
+    if target_error is not None:
+        return target_error
 
     if requested_scope:
         requested = set(requested_scope.split())
@@ -308,6 +355,7 @@ def _grant_client_credentials(client: Client, keys: KeyManager,
         "access_token": _mint_access_token(
             keys, sub=sub, scope=granted,
             client_id=client.client_id, roles=_roles_for(client),
+            audience=audience,
         ),
         "token_type": "Bearer",
         "expires_in": settings.access_token_ttl,

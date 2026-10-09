@@ -27,6 +27,7 @@ Pre-1.0: the latest `main` branch only.
 | Dev-default secrets active unless overridden | **Mitigated**: loud startup warning | Set `SESSION_SECRET`, `LOG_HASH_PEPPER` (see `.env.example`) |
 | Hand-rolled OIDC — not independently audited | Planned: external review before 1.0 | Suitable for evaluation/dev; get a review before production |
 | Single-tenant config (no org/project isolation server-side) | Hosted multi-tenancy in progress | One deployment per tenant |
+| Open Dynamic Client Registration (`/register`) | Rate limiting in progress | Expected by MCP clients; validate-then-register only, redirect URIs strict |
 
 ## Scope notes
 

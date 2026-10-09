@@ -25,6 +25,7 @@ from app.oidc.codes import AuthCodeStore
 from app.oidc.pages import consent_form, error_page, login_form
 from app.oidc.session import create_session_token, parse_session_token
 from app.oidc.users import USERS, find_by_email, verify_password
+from app.settings import settings
 
 router = APIRouter()
 
@@ -40,6 +41,8 @@ class ValidatedAuthRequest:
     code_challenge: str
     code_challenge_method: str
     nonce: str | None
+    resource: str | None = None   # RFC 8707: validated aud binding
+
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,7 @@ def validate_authorize_params(
     code_challenge: str | None,
     code_challenge_method: str | None,
     nonce: str | None,
+    resource: str | None = None,
 ) -> tuple[ValidatedAuthRequest | None, ValidationError | None]:
     """Shared by GET /authorize and POST /consent.
 
@@ -119,6 +123,17 @@ def validate_authorize_params(
             True,
         )
 
+    # RFC 8707 (resource indicators): the requested aud binding must be on
+    # our EXACT-match allowlist. An unvalidated resource param would let a
+    # client mint tokens audience-bound to someone else's API — the
+    # audience-forgery vector RFC 8707 §2.1 exists to prevent.
+    if resource is not None and resource not in settings.allowed_resources:
+        return None, ValidationError(
+            "invalid_target",
+            "resource is not a registered resource of this authorization server",
+            True,
+        )
+
     return ValidatedAuthRequest(
         client=client,
         redirect_uri=redirect_uri or "",
@@ -127,7 +142,9 @@ def validate_authorize_params(
         code_challenge=code_challenge or "",
         code_challenge_method="S256",
         nonce=nonce,
+        resource=resource,
     ), None
+
 
 
 # -- helpers -------------------------------------------------------------
@@ -180,6 +197,7 @@ def authorize(
     code_challenge: str | None = None,
     code_challenge_method: str | None = None,
     nonce: str | None = None,
+    resource: str | None = None,
 ) -> Response:
     registry: ClientRegistry = request.app.state.registry
     validated, verr = validate_authorize_params(
@@ -192,6 +210,7 @@ def authorize(
         code_challenge=code_challenge,
         code_challenge_method=code_challenge_method,
         nonce=nonce,
+        resource=resource,
     )
     if verr is not None or validated is None:
         return _fail(verr, state=state, redirect_uri=redirect_uri)
@@ -214,6 +233,7 @@ def authorize(
             code_challenge=validated.code_challenge,
             code_challenge_method=validated.code_challenge_method,
             nonce=validated.nonce,
+            resource=validated.resource,
             # email shown ONLY to its owner in their own browser — never logged
             user_label=f"{user.display_name} <{user.email}>",
         )
@@ -274,6 +294,7 @@ def consent(
     code_challenge: str = Form(...),
     code_challenge_method: str = Form(...),
     nonce: str | None = Form(None),
+    resource: str | None = Form(None),
 ) -> Response:
     registry: ClientRegistry = request.app.state.registry
     # FULL re-validation of every echoed field — they came from the browser.
@@ -287,6 +308,7 @@ def consent(
         code_challenge=code_challenge,
         code_challenge_method=code_challenge_method,
         nonce=nonce,
+        resource=resource,
     )
     if verr is not None or validated is None:
         return _fail(verr, state=state, redirect_uri=redirect_uri)
@@ -311,6 +333,7 @@ def consent(
         code_challenge=validated.code_challenge,
         code_challenge_method=validated.code_challenge_method,
         nonce=validated.nonce,
+        resource=validated.resource,   # RFC 8707: carried into the code record
     )
     return _redirect_with(redirect_uri, {"code": raw_code, "state": state})
 

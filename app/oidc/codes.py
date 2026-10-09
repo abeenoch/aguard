@@ -54,6 +54,8 @@ class AuthCodeRecord:
     nonce: str | None
     issued_at: int
     expires_at: int
+    resource: str | None = None  # RFC 8707: aud binding requested at authorize
+
 
 
 def _hash(code: str) -> str:
@@ -78,6 +80,7 @@ class AuthCodeStore:
         code_challenge: str,
         code_challenge_method: str,
         nonce: str | None,
+        resource: str | None = None,
     ) -> str:
         now = int(time.time())
         raw = secrets.token_urlsafe(48)
@@ -92,6 +95,7 @@ class AuthCodeStore:
             nonce=nonce,
             issued_at=now,
             expires_at=now + self._ttl,
+            resource=resource,
         )
         self._live[record.code_hash] = record
         self._gc()
