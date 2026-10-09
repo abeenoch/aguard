@@ -33,9 +33,9 @@ dev = ["pytest", "httpx", "build", "twine"]
 agctl = "aguard.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/abeenoch/a-guard"
-Repository = "https://github.com/abeenoch/A-guard"
-Issues = "https://github.com/abeenoch/a-guard/issues"
+Homepage = "https://github.com/abeenoch/aguard"
+Repository = "https://github.com/abeenoch/aguard"
+Issues = "https://github.com/abeenoch/aguard/issues"
 
 [build-system]
 requires = ["setuptools>=68"]

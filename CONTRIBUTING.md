@@ -21,7 +21,7 @@ logging, and databases — contributions to any of the three are welcome.
 ## Development setup
 
 ```bash
-git clone https://github.com/abeenoch/a-guard && cd a-guard
+git clone https://github.com/abeenoch/aguard && cd aguard
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env    # fill in PGPASSWORD (tests apply schema.sql)

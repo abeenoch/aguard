@@ -34,7 +34,7 @@ The three layers are independent: use one, two, or all three.
 ## Quickstart (local)
 
 ```bash
-git clone https://github.com/abeenoch/A-guard && cd A-guard
+git clone https://github.com/abeenoch/aguard && cd aguard
 python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
