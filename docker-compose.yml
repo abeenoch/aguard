@@ -15,7 +15,11 @@ services:
       - ./app/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_auth"]
+      # -h localhost forces a TCP check. During initdb the temporary server
+      # listens on the unix socket only, so a socket-only check can report
+      # healthy while schema.sql is still running — and the app would then
+      # start against a database with no tables.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U postgres -d agent_auth"]
       interval: 3s
       timeout: 3s
       retries: 15

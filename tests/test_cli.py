@@ -114,3 +114,45 @@ def test_audit_denied_filter_only_zero_row_ops(capsys, monkeypatch):
                        "--sub", "usr_agctl_test"]) == 0
     out = capsys.readouterr().out
     assert "selftest op" in out
+
+
+# ---------------------------------- init -----------------------------------
+
+
+def test_read_env_file_parses_and_ignores_comments(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text('# comment\n\nA=1\nB="two"\nC=\n', encoding="utf-8")
+    assert agctl._read_env_file(path) == {"A": "1", "B": "two", "C": ""}
+
+
+def test_read_env_file_missing_is_empty(tmp_path):
+    assert agctl._read_env_file(tmp_path / "nope") == {}
+
+
+def test_write_env_file_generates_real_secrets(tmp_path):
+    example = tmp_path / ".env.example"
+    example.write_text("# template\nPG_SUPERUSER_PASSWORD=\n# SESSION_SECRET=\n",
+                       encoding="utf-8")
+    out = tmp_path / ".env"
+    agctl._write_env_file(out, example, "s3cret")
+    text = out.read_text(encoding="utf-8")
+    values = agctl._read_env_file(out)
+
+    # substituted, not appended: first-occurrence-wins in the dotenv loader
+    assert values["PG_SUPERUSER_PASSWORD"] == "s3cret"
+    assert text.count("PG_SUPERUSER_PASSWORD=s3cret") == 1
+    assert len(values["SESSION_SECRET"]) == 64          # token_hex(32)
+    assert len(values["LOG_HASH_PEPPER"]) == 64
+    assert values["SESSION_SECRET"] != values["LOG_HASH_PEPPER"]
+    for placeholder in ("dev-session-secret-change-me", "dev-only-pepper-change-me"):
+        assert placeholder not in text
+
+
+def test_write_env_file_without_password_keeps_template_placeholder(tmp_path):
+    example = tmp_path / ".env.example"
+    example.write_text("PG_SUPERUSER_PASSWORD=\n", encoding="utf-8")
+    out = tmp_path / ".env"
+    agctl._write_env_file(out, example, None)
+    values = agctl._read_env_file(out)
+    assert values["PG_SUPERUSER_PASSWORD"] == ""        # still unset
+    assert len(values["SESSION_SECRET"]) == 64          # but secrets are real

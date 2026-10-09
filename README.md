@@ -34,23 +34,48 @@ The three layers are independent: use one, two, or all three.
 ## Quickstart (local)
 
 ```bash
-git clone https://github.com/abeenoch/a-guard && cd a-guard
+git clone https://github.com/abeenoch/A-guard && cd A-guard
 python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-cp .env.example .env        # fill in PGPASSWORD / secrets (see below)
+# One command does the setup — and then proves it worked:
+#   .env with freshly generated secrets, database created, schema applied,
+#   and a live check that the agent really is refused by Postgres.
+#   (Run without --pg-password to just generate .env, then fill it in.)
+python scripts/agctl.py init --pg-password <your-postgres-password>
 
-createdb agent_auth          # or psql -U postgres -c "CREATE DATABASE agent_auth"
-psql -U postgres -d agent_auth -f app/db/schema.sql
-
-uvicorn app.main:app --port 8000
+python -m uvicorn app.main:app --port 8000
 ```
 
-In another terminal:
+Expected tail of `init`:
+
+```
+[PASS] human role reads documents — 0 row(s)
+[PASS] agent role reads its tenant — 0 row(s)
+[PASS] agent DELETE refused by the database — InsufficientPrivilege
+[PASS] agent cannot escalate to app_user — membership violation
+```
+
+`init` refuses to run if the database already holds audit rows (it re-applies
+`schema.sql`, which drops tables) — pass `--force` when that is what you want.
+
+<details>
+<summary>Prefer to do it by hand?</summary>
 
 ```bash
-python scripts/smoke.py      # 12 end-to-end checks: OIDC flow, RBAC, redaction
-pytest                        # 143 tests
+cp .env.example .env         # then set PG_SUPERUSER_PASSWORD / SESSION_SECRET / LOG_HASH_PEPPER
+createdb agent_auth
+psql -U postgres -d agent_auth -f app/db/schema.sql
+```
+</details>
+
+### Verify it works
+
+```bash
+python scripts/agctl.py verify     # redaction self-check, pass/fail
+python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
+python scripts/mcp_smoke.py        # real MCP client against a live server
+pytest                             # 170 tests
 ```
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
