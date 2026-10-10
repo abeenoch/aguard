@@ -28,6 +28,7 @@ from aguard.db.session import service_session
 from aguard.main import app
 from aguard.ratelimit import (
     InMemoryRateLimiter,
+    PostgresRateLimiter,
     RateLimit,
     _identity_key,
     build_rate_limiter,
@@ -208,19 +209,35 @@ def test_identity_keys_are_hashed_not_stored_in_the_clear():
     assert len(_identity_key("account", "x" * 100_000)) == len(key)
 
 
-def test_build_rate_limiter_refuses_an_unimplemented_backend(monkeypatch):
-    """Naming a shared backend must fail loudly, not quietly mean memory."""
+def test_build_rate_limiter_selects_the_shared_backend(monkeypatch):
+    """The postgres backend is now implemented: it selects PostgresRateLimiter.
+
+    This replaces the earlier "refuses an unimplemented backend" test. That
+    guard was correct while no shared limiter shipped — but the whole point of
+    the seam was to fill it, and a multi-worker deployment is exactly when the
+    per-process ceiling (N x limit) matters. See tests/test_shared_limits.py for
+    the proof that two instances share one count.
+    """
     monkeypatch.setattr(ratelimit_module, "settings",
                         _settings_with(rate_limit_backend="postgres"))
-    with pytest.raises(ValueError, match="not implemented yet"):
-        build_rate_limiter()
+    assert isinstance(build_rate_limiter(), PostgresRateLimiter)
 
 
 def test_build_rate_limiter_rejects_an_unknown_backend(monkeypatch):
+    """A backend we don't know must fail loudly, not quietly mean memory —
+    silent degradation is what turns a security control into a decoration."""
     monkeypatch.setattr(ratelimit_module, "settings",
                         _settings_with(rate_limit_backend="redis"))
     with pytest.raises(ValueError, match="unknown RATE_LIMIT_BACKEND"):
         build_rate_limiter()
+
+
+def test_build_rate_limiter_defaults_to_memory(monkeypatch):
+    """The default topology (single worker) must stay on the in-process path —
+    a shared backend must never become something you get by accident."""
+    monkeypatch.setattr(ratelimit_module, "settings",
+                        _settings_with(rate_limit_backend="memory"))
+    assert isinstance(build_rate_limiter(), InMemoryRateLimiter)
 
 
 def test_build_rate_limiter_yields_the_interface_a_store_backend_will_use():

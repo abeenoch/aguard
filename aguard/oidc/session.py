@@ -41,7 +41,12 @@ def parse_session_token(token: str | None, *, secret: bytes | None = None) -> st
     if not token:
         return None
     secret = settings.session_secret if secret is None else secret
-    parts = token.split(".")
+    # rsplit from the RIGHT: the trailing two fields (exp, sig) never contain a
+    # dot, but `sub` might (it is not validated at creation). split(".") with a
+    # strict 3-part count would reject such a token as malformed — a silent
+    # login loop for any sub containing a dot — so peel the two fixed fields
+    # off the end and treat everything before them as the subject.
+    parts = token.rsplit(".", 2)
     if len(parts) != 3:
         return None
     sub, exp, signature = parts

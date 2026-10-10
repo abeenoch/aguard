@@ -11,6 +11,7 @@ stays in charge.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, Request
@@ -29,9 +30,19 @@ class DocumentIn(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
 
 
+#: A correlation id an upstream proxy may legitimately set: URL-safe tokens
+#: only, bounded length. This is the SHAPE we accept; anything else falls back
+#: to our own generated id. The header is client-supplied and lands in
+#: agent_audit verbatim, so bounding it here is what keeps unbounded/structured
+#: attacker input out of the audit table (and out of any downstream log sink).
+_REQUEST_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
 def _request_id(request: Request) -> str:
     rid = request.headers.get("x-request-id")
-    return rid if rid else uuid.uuid4().hex[:16]
+    if rid and _REQUEST_ID_RE.fullmatch(rid):
+        return rid
+    return uuid.uuid4().hex[:16]
 
 
 def _session_kind(principal: Principal) -> str:
