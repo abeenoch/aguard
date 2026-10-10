@@ -67,11 +67,26 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
+#: A tag we have already emitted (``email[h:abcd…]``). Kept next to correlate()
+#: so the producer and the recognizer of its output can never drift apart.
+_ALREADY_CORRELATED_RE = re.compile(r"^[a-z]+\[h:[0-9a-f]{1,64}\]$")
+
+
 def correlate(value: str, pepper: bytes, tag: str) -> str:
     """Keyed-HMAC correlation ID: same input -> same output, not reversible.
 
     Normalization before hashing is load-bearing: without it, case/whitespace
-    variants of one identity hash differently and correlation is useless."""
+    variants of one identity hash differently and correlation is useless.
+
+    Idempotent: if ``value`` is ALREADY a correlation tag (our own output),
+    return it unchanged. redact_event() is documented as non-idempotent overall,
+    but that rests on this one detail — correlate() recognizing its own result
+    means a record that loses its "already done" marker is re-masked to the SAME
+    tag rather than to ``email[h:…]`` nested inside another tag. So the worst
+    case is a redundant pass, never corrupted output.
+    """
+    if _ALREADY_CORRELATED_RE.match(value.strip()):
+        return value
     normalized = value.strip().lower()
     digest = hmac.new(pepper, normalized.encode("utf-8"), hashlib.sha256)
     return f"{tag}[h:{digest.hexdigest()[:12]}]"

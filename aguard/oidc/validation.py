@@ -24,7 +24,6 @@ Deliberate properties:
 from __future__ import annotations
 
 import jwt as pyjwt
-from cryptography.hazmat.primitives import serialization
 from jwt import PyJWKError  # noqa: F401  (kept for clarity of failure modes)
 
 from aguard.oidc.keys import ALGORITHM, KeyManager
@@ -76,10 +75,9 @@ def verify_access_token(
     if key is None:
         raise TokenValidationError("kid not in JWKS")
 
-    public_pem = key.private_key.public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
+    # Cached on the key (a pure function of immutable PEM material), so this is
+    # a lookup rather than a reconstruction on every validated request.
+    public_pem = key.public_pem
 
     try:
         claims = pyjwt.decode(

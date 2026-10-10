@@ -289,6 +289,15 @@ def _grant_refresh(
     refresh_token: str | None, requested_scope: str | None,
     resource: str | None,
 ) -> Response:
+    # Defense in depth: the client must be permitted to use the refresh grant.
+    # rotate() already enforces ownership of the token, so this is not the
+    # security boundary — but rejecting an unauthorized grant here makes the
+    # check uniform with _grant_client_credentials() and fails early, before
+    # any database work, for a client misconfigured with the wrong grant set.
+    if "refresh_token" not in client.grant_types:
+        return _error(400, "unauthorized_client",
+                      "client may not use refresh_token")
+
     if not refresh_token:
         return _error(400, "invalid_request", "refresh_token is required")
 
