@@ -14,10 +14,12 @@ What this defends against — each is a concrete attack, not a hypothetical:
 
 Two layers, deliberately separated:
 
-  ``RateLimiter`` (Protocol)  WHERE attempts are counted. Only
-      ``InMemoryRateLimiter`` ships today; a database-backed implementation
-      drops in behind the same Protocol via ``build_rate_limiter()``, exactly
-      as ``aguard/oidc/stores.py`` does for authorization state.
+  ``RateLimiter`` (Protocol)  WHERE attempts are counted.
+      ``InMemoryRateLimiter`` for a single process, ``PostgresRateLimiter`` for
+      a shared one; ``build_rate_limiter()`` selects from
+      ``RATE_LIMIT_BACKEND``, exactly as ``aguard/oidc/stores.py`` does for
+      authorization state. The two differ in one real way — window shape —
+      because the medium rewards a fixed window; both honour the Protocol.
   ``enforce_rate_limit()``    WHAT is counted, and what the caller gets back.
 
 Identities are HASHED before they become counters. The counter map would
@@ -35,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import random
 import threading
 import time
 from collections import OrderedDict, deque
@@ -195,6 +198,126 @@ class InMemoryRateLimiter:
                     "policy %r (counters are per-process)", evicted[0])
 
 
+class PostgresRateLimiter:
+    """Shared counters in ``rate_limit_buckets`` — correct for N workers.
+
+    The Protocol guarantees a route change is never needed to move between
+    this and the in-process limiter; ``build_rate_limiter()`` picks one from
+    ``RATE_LIMIT_BACKEND``. This class is what makes the counter authoritative
+    across workers and across a restart: two workers racing the same account
+    against the ``login_account`` ceiling see ONE count, not two.
+
+    Fixed windows, deliberately — a different trade than the in-process
+    limiter's sliding window, and the reason is the medium, not laziness.
+    A shared sliding window means one INSERT per attempt plus a DELETE sweep
+    to age entries out; the count can never be a single row. Fixed windows let
+    a whole attempt be one ``INSERT ... ON CONFLICT DO UPDATE`` (the counter is
+    the row), which keeps the hot path to a single round trip and a single
+    source of truth. The cost is the known 2x-at-the-boundary behaviour a fixed
+    window has, and that is acceptable here: these are coarse anti-abuse
+    ceilings (5 logins per account per 5 min), not billing-grade metering.
+
+    ``now`` defaults to wall-clock seconds. The in-process limiter uses a
+    monotonic clock (immune to NTP steps); a shared counter CANNOT, because
+    every worker and every row in the table must agree on what "now" is — a
+    monotonic clock is per-process and meaningless across them.
+
+    Fail-open on database error: if the counter cannot be read or written the
+    decision ALLOWS. Rate limiting is an availability/abuse control layered on
+    an already-authenticating endpoint, not the authentication itself; failing
+    it closed would let a database blip 429 every legitimate login. The
+    security-relevant limit (per-account guessing) is unchanged by the choice.
+    """
+
+    def __init__(self, policies: Mapping[str, RateLimit]) -> None:
+        if not policies:
+            raise ValueError("at least one rate-limit policy is required")
+        self._policies = dict(policies)
+
+    # -- introspection (parity with the in-process limiter) ----------------
+    @property
+    def tracked_keys(self) -> int:
+        """Distinct identities still within the widest window.
+
+        Counts rows whose window is open, so an abandoned identity that stops
+        hitting drops out once its window expires rather than lingering.
+        """
+        from aguard.db.session import service_session
+
+        widest = max(rule.window_seconds for rule in self._policies.values())
+        cutoff = int(time.time()) - widest
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM ("
+                    "  SELECT DISTINCT policy, bucket_key FROM rate_limit_buckets"
+                    "  WHERE window_start >= %s"
+                    ") AS live", (cutoff,))
+                (total,) = cur.fetchone()
+        return int(total)
+
+    def policy(self, name: str) -> RateLimit:
+        try:
+            return self._policies[name]
+        except KeyError:
+            raise ValueError(f"unknown rate-limit policy {name!r}") from None
+
+    def hit(self, policy: str, key: str, *,
+            now: float | None = None) -> RateLimitDecision:
+        rule = self.policy(policy)
+        stamp = time.time() if now is None else now
+        window_start = int(stamp) // rule.window_seconds * rule.window_seconds
+
+        from aguard.db.session import service_session
+
+        try:
+            with service_session() as conn:
+                with conn.cursor() as cur:
+                    # One atomic read-modify-write: the row IS the counter, so
+                    # two workers hitting the same (policy, key, window) cannot
+                    # both read 4 and both write 5. ON CONFLICT targets the PK.
+                    cur.execute(
+                        "INSERT INTO rate_limit_buckets"
+                        " (policy, bucket_key, window_start, count)"
+                        " VALUES (%s, %s, %s, 1)"
+                        " ON CONFLICT (policy, bucket_key, window_start)"
+                        " DO UPDATE SET count = rate_limit_buckets.count + 1"
+                        " RETURNING count",
+                        (policy, key, window_start),
+                    )
+                    (count,) = cur.fetchone()
+                    # Opportunistic sweep: prune windows that closed at least
+                    # one full period ago. Probabilistic so a busy endpoint does
+                    # not pay a DELETE on every single request.
+                    if random.random() < 0.01:
+                        self._gc(cur, stamp, rule.window_seconds)
+        except Exception:
+            log.exception("rate-limit counter unavailable; failing open for "
+                          "policy %r", policy)
+            return RateLimitDecision(True, rule.limit, rule.limit, 0)
+
+        if count > rule.limit:
+            # The window rolls at window_start + window_seconds; from there the
+            # caller has its allowance back. Floor at 1 for the same reason as
+            # the in-process limiter: "Retry-After: 0" invites an instant retry.
+            retry = max(window_start + rule.window_seconds - int(stamp), 1)
+            return RateLimitDecision(False, rule.limit, 0, retry)
+
+        return RateLimitDecision(True, rule.limit, rule.limit - count, 0)
+
+    def _gc(self, cur, stamp: float, window_seconds: int) -> None:
+        """Delete rows from windows that closed at least one period ago.
+
+        Keeping only the current (and just-elapsed) window means the table stays
+        proportional to live identities, not to total attempts ever made — the
+        same bound the in-process limiter gets from its key cap, here enforced
+        by age instead of count.
+        """
+        cur.execute(
+            "DELETE FROM rate_limit_buckets WHERE window_start < %s",
+            (int(stamp) // window_seconds * window_seconds - window_seconds,))
+
+
 def _identity_key(kind: str, value: str) -> str:
     """Stable, bounded, non-reversible bucket key for an identity.
 
@@ -309,24 +432,22 @@ def default_policies() -> dict[str, RateLimit]:
 def build_rate_limiter() -> RateLimiter:
     """Select where attempts are counted. Mirrors aguard/oidc/stores.py.
 
-    Only the in-process implementation ships today. The switch exists so the
-    choice is explicit rather than an accident of implementation — and so
-    ``RATE_LIMIT_BACKEND=postgres`` FAILS LOUDLY instead of quietly leaving an
-    operator with per-process counters. Silent degradation is what turns a
-    security control into a decoration.
+    ``memory``  per-process counters (InMemoryRateLimiter). Correct for a
+               single worker; with N workers the ceiling is N x the limit.
+    ``postgres`` shared counters (PostgresRateLimiter). Correct for N workers
+               and durable across a restart — one authoritative count. Requires
+               the ``rate_limit_buckets`` table from aguard/db/schema.sql.
+
+    The switch exists so the topology decides the implementation explicitly,
+    rather than an operator discovering the gap when a botnet splits its
+    guesses across workers.
     """
     backend = settings.rate_limit_backend
     if backend == MEMORY:
         return InMemoryRateLimiter(default_policies(),
                                    max_keys=settings.rate_limit_max_keys)
     if backend == POSTGRES:
-        raise ValueError(
-            "RATE_LIMIT_BACKEND=postgres is not implemented yet: counters are "
-            "in-process, so N workers enforce N x the configured limit. Run a "
-            "single worker with memory (the default), or implement the "
-            "RateLimiter Protocol against the database — aguard/ratelimit.py "
-            "documents the seam and aguard/oidc/stores.py is the worked "
-            "example.")
+        return PostgresRateLimiter(default_policies())
     raise ValueError(
         f"unknown RATE_LIMIT_BACKEND {backend!r} "
         f"(expected {MEMORY!r} or {POSTGRES!r})")
@@ -336,6 +457,7 @@ __all__ = [
     "MEMORY",
     "POSTGRES",
     "InMemoryRateLimiter",
+    "PostgresRateLimiter",
     "RateLimit",
     "RateLimitDecision",
     "RateLimiter",
