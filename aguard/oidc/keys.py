@@ -11,8 +11,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass
+from functools import cached_property
 from pathlib import Path
 
 import jwt  # PyJWT: serialization only — all policy lives in this codebase
@@ -63,20 +65,39 @@ class ManagedKey:
     # "unknown" (a keystore written before this field existed).
     retired_at: int | None = None
 
-    @property
+    @cached_property
     def private_key(self) -> rsa.RSAPrivateKey:
-        """Parse the PEM, narrowed to RSA at RUNTIME rather than cast.
+        """Parse the PEM once and reuse it, narrowed to RSA at RUNTIME.
+
+        Re-parsing PKCS#8 on every access put an RSA parse on the hottest path
+        in the server — every token validation and every /jwks render — for a
+        value that is a pure function of the immutable ``pem`` field. ``pem`` is
+        never reassigned, so the cache cannot go stale. (This is a mutable
+        dataclass, but the only mutation is status/retired_at during rotation;
+        key MATERIAL is fixed at construction.)
 
         The keystore is a file on disk, so a non-RSA key (corruption, a stray
         hand-edit, a future key type) must fail loudly here — not later as a
-        JWKS that nothing can verify against, or as a signature nobody
-        accepts.
+        JWKS that nothing can verify against, or as a signature nobody accepts.
         """
         key = serialization.load_pem_private_key(self.pem.encode(), password=None)
         if not isinstance(key, rsa.RSAPrivateKey):
             raise RuntimeError(
                 f"keystore key {self.kid[:8]}… is not an RSA private key")
         return key
+
+    @cached_property
+    def public_pem(self) -> bytes:
+        """SubjectPublicKeyInfo PEM, cached — see private_key for the reasoning.
+
+        This is exactly what a remote resource server derives to verify a token,
+        so caching it makes verification a dict lookup instead of a key
+        reconstruction.
+        """
+        return self.private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
 
     def public_jwk(self) -> dict:
         """Public half as a JWK. Structurally cannot contain private members
@@ -97,6 +118,17 @@ class KeyManager:
         self._dir = Path(key_dir)
         self._store = self._dir / "keys.json"
         self._keys: list[ManagedKey] = []
+        # Guards every read-modify-write of the keystore. Sync endpoints run in
+        # Starlette's threadpool, and /jwks reads concurrently with a rotation
+        # in another thread — without this, a rotation can be lost or a reader
+        # can observe a half-updated list.
+        self._lock = threading.RLock()
+        # (mtime_ns, size) of the file as last seen by THIS process. Used to
+        # notice when another worker rotated the keystore on disk: with several
+        # workers each holds its own copy, and a copy that never refreshes keeps
+        # publishing a JWKS the other workers already retired — the multi-worker
+        # face of the "every service 401s after rotation" outage.
+        self._seen: tuple[int, int] | None = None
         self._load_or_create()
         if max_token_ttl is not None:
             # Startup is the one path that reliably runs, so it is where
@@ -114,14 +146,45 @@ class KeyManager:
         kid stability across restarts is a hard requirement: tokens minted
         before a redeploy must still validate after it."""
         if self._store.exists():
-            raw = json.loads(self._store.read_text(encoding="utf-8"))
-            self._keys = [ManagedKey(**item) for item in raw["keys"]]
+            self._keys = self._read_store()
+            self._seen = self._stamp()
             if not any(k.status == "active" for k in self._keys):
                 raise RuntimeError("keystore has no active key — corrupt state")
             return
         self._dir.mkdir(parents=True, exist_ok=True)
         self._keys = [self._generate(status="active")]
         self._persist()
+
+    def _read_store(self) -> list[ManagedKey]:
+        raw = json.loads(self._store.read_text(encoding="utf-8"))
+        return [ManagedKey(**item) for item in raw["keys"]]
+
+    def _stamp(self) -> tuple[int, int] | None:
+        try:
+            st = self._store.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def _refresh_if_changed(self) -> None:
+        """Reload the keystore if another worker changed it on disk.
+
+        Cheap guard: one ``stat()`` per access. Only reloads when the file's
+        mtime/size moved, so the steady state is a syscall, not a parse. A
+        malformed external edit is ignored (keep serving the last good keys) —
+        a bad keystore must not take down a server that is currently signing
+        valid tokens; startup is where a corrupt store should fail loudly.
+        """
+        stamp = self._stamp()
+        if stamp is not None and stamp != self._seen:
+            try:
+                keys = self._read_store()
+            except (ValueError, KeyError):
+                return
+            if any(k.status == "active" for k in keys):
+                self._keys = keys
+                self._seen = stamp
+
 
     def _generate(self, status: str) -> ManagedKey:
         key = rsa.generate_private_key(
@@ -148,16 +211,22 @@ class KeyManager:
         token 401s instantly — the rotation outage described above.
 
         retired_at is stamped as the key stops signing, because that — not
-        created_at — is what the removal grace window must be measured from."""
-        now = int(time.time())
-        for key in self._keys:
-            if key.status == "active":
-                key.status = "retired"
-                key.retired_at = now
-        new_key = self._generate(status="active")
-        self._keys.append(new_key)
-        self._persist()
-        return new_key
+        created_at — is what the removal grace window must be measured from.
+
+        Held under the lock for the whole read-modify-write: two concurrent
+        rotations would otherwise each read the same active key, demote it
+        twice, and the loser's new key would be overwritten — a rotation that
+        silently did not happen."""
+        with self._lock:
+            now = int(time.time())
+            for key in self._keys:
+                if key.status == "active":
+                    key.status = "retired"
+                    key.retired_at = now
+            new_key = self._generate(status="active")
+            self._keys.append(new_key)
+            self._persist()
+            return new_key
 
     def retire_expired(self, max_token_ttl: int) -> list[str]:
         """Remove retired keys once nothing they signed can still be valid.
@@ -178,47 +247,66 @@ class KeyManager:
 
         Without this, JWKS grows forever; with it done wrong, old tokens break.
         """
-        now = int(time.time())
-        kept, dropped = [], []
-        for key in self._keys:
-            if (key.status == "retired"
-                    and key.retired_at is not None
-                    and key.retired_at + max_token_ttl < now):
-                dropped.append(key.kid)
-            else:
-                kept.append(key)
-        if dropped:
-            self._keys = kept
-            self._persist()
-        return dropped
+        with self._lock:
+            now = int(time.time())
+            kept, dropped = [], []
+            for key in self._keys:
+                if (key.status == "retired"
+                        and key.retired_at is not None
+                        and key.retired_at + max_token_ttl < now):
+                    dropped.append(key.kid)
+                else:
+                    kept.append(key)
+            if dropped:
+                self._keys = kept
+                self._persist()
+            return dropped
 
     def _persist(self) -> None:
         """Atomic write — never leave a half-written keystore on a crash,
-        which would brick the server on next boot."""
+        which would brick the server on next boot. Caller holds self._lock."""
         payload = {"keys": [asdict(k) for k in self._keys]}
         tmp = self._store.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         tmp.replace(self._store)
+        # Record what we just wrote so a sibling worker's copy of the same
+        # content isn't mistaken for a change, and so our own next access
+        # doesn't reload what we already have.
+        self._seen = self._stamp()
 
     # -- accessors -------------------------------------------------------
 
     @property
     def active(self) -> ManagedKey:
-        return next(k for k in self._keys if k.status == "active")
+        with self._lock:
+            self._refresh_if_changed()
+            return next(k for k in self._keys if k.status == "active")
 
     @property
     def all_keys(self) -> list[ManagedKey]:
-        return list(self._keys)
+        with self._lock:
+            self._refresh_if_changed()
+            return list(self._keys)
 
     @property
     def jwks(self) -> dict:
-        return {"keys": [k.public_jwk() for k in self._keys]}
+        with self._lock:
+            self._refresh_if_changed()
+            return {"keys": [k.public_jwk() for k in self._keys]}
 
     def sign(self, claims: dict, *, headers: dict | None = None) -> str:
         """Sign a JWT with the active key, `kid` header injected.
 
         Callers build the claims; this layer only guarantees algorithm pinning
-        (RS256 — never whatever the caller suggests) and key selection."""
-        merged = {"kid": self.active.kid, **(headers or {})}
-        return jwt.encode(claims, self.active.pem, algorithm=ALGORITHM, headers=merged)
+        (RS256 — never whatever the caller suggests) and key selection.
+
+        The active key is read once, under the lock, so the kid header and the
+        signature always come from the same key even if another thread rotates
+        mid-call."""
+        with self._lock:
+            self._refresh_if_changed()
+            active = next(k for k in self._keys if k.status == "active")
+            kid, pem = active.kid, active.pem
+        merged = {"kid": kid, **(headers or {})}
+        return jwt.encode(claims, pem, algorithm=ALGORITHM, headers=merged)
 

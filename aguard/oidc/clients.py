@@ -20,8 +20,25 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
+
+log = logging.getLogger("a-guard.clients")
+
+#: Ceiling on dynamically-registered clients (those created at runtime via
+#: Dynamic Client Registration). Seeded clients are permanent and exempt.
+#:
+#: /register is rate-limited (10/hour), but rate limiting bounds the RATE, not
+#: the total: a process left up for months can still accumulate an unbounded
+#: number. This cap is the backstop. It is deliberately generous — a lab will
+#: register a handful — and eviction drops the OLDEST dynamic client, so the
+#: trade-off (a stale registration eventually disappears) matches how a
+#: long-idle credential becoming unusable is acceptable, whereas unbounded
+#: growth is not.
+MAX_DYNAMIC_CLIENTS = 1000
 
 
 def hash_secret(secret: str) -> str:
@@ -65,14 +82,47 @@ class Client:
 class ClientRegistry:
     def __init__(self) -> None:
         self._clients: dict[str, Client] = {}
+        # Seeded clients (from seed_registry) are permanent and never evicted.
+        # Everything added later via register() is "dynamic" and subject to the
+        # MAX_DYNAMIC_CLIENTS ceiling.
+        self._seeded: set[str] = set()
+        self._dynamic_order: OrderedDict[str, None] = OrderedDict()
+        # register() and get() are called from the sync threadpool, so two
+        # requests really can interleave. The check-then-insert in register()
+        # is a race without this: two concurrent /register calls for the same
+        # client_id could both pass the duplicate check and one credential would
+        # silently replace another.
+        self._lock = threading.Lock()
+
+    def seed(self, client: Client) -> None:
+        """Register a permanent client (used only by seed_registry)."""
+        with self._lock:
+            if client.client_id in self._clients:
+                raise ValueError(f"duplicate client_id: {client.client_id}")
+            self._clients[client.client_id] = client
+            self._seeded.add(client.client_id)
 
     def register(self, client: Client) -> None:
-        if client.client_id in self._clients:
-            raise ValueError(f"duplicate client_id: {client.client_id}")
-        self._clients[client.client_id] = client
+        """Register a dynamic (runtime-created) client.
+
+        Enforces the duplicate-id check and the dynamic-client ceiling under
+        the lock so both hold against concurrent registrations.
+        """
+        with self._lock:
+            if client.client_id in self._clients:
+                raise ValueError(f"duplicate client_id: {client.client_id}")
+            self._clients[client.client_id] = client
+            self._dynamic_order[client.client_id] = None
+            while len(self._dynamic_order) > MAX_DYNAMIC_CLIENTS:
+                oldest, _ = self._dynamic_order.popitem(last=False)
+                del self._clients[oldest]
+                log.warning(
+                    "dynamic-client ceiling reached; dropped the oldest "
+                    "registration %r (seed clients are never evicted)", oldest)
 
     def get(self, client_id: str) -> Client | None:
-        return self._clients.get(client_id)
+        with self._lock:
+            return self._clients.get(client_id)
 
     def authenticate(self, client_id: str, secret: str | None, method: str) -> Client | None:
         """Token-endpoint client authentication (RFC 6749 §2.3.1).
@@ -106,7 +156,7 @@ def seed_registry() -> ClientRegistry:
     """
     registry = ClientRegistry()
 
-    registry.register(Client(
+    registry.seed(Client(
         client_id="demo-spa",
         client_secret_hash=None,
         redirect_uris=("http://localhost:8000/demo/callback",),
@@ -118,7 +168,7 @@ def seed_registry() -> ClientRegistry:
         kind="human",
     ))
 
-    registry.register(Client(
+    registry.seed(Client(
         client_id="demo-conf",
         client_secret_hash=hash_secret(os.environ.get("DEMO_CONF_SECRET", "demo-conf-secret")),
         redirect_uris=("http://localhost:8000/demo/callback",),
@@ -133,7 +183,7 @@ def seed_registry() -> ClientRegistry:
         kind="human",
     ))
 
-    registry.register(Client(
+    registry.seed(Client(
         client_id="cli-agent",
         client_secret_hash=hash_secret(os.environ.get("CLI_AGENT_SECRET", "cli-agent-secret")),
         redirect_uris=(),                          # headless: no browser flow
@@ -147,7 +197,7 @@ def seed_registry() -> ClientRegistry:
     # Tokens issued here carry sub=<human> AND roles=["agent"] — on-behalf-of.
     # The DB layer will map that to: session role = agent_readonly (cannot
     # write) while app.sub = the human (sees ONLY that human's rows).
-    registry.register(Client(
+    registry.seed(Client(
         client_id="chat-agent",
         client_secret_hash=hash_secret(os.environ.get("CHAT_AGENT_SECRET", "chat-agent-secret")),
         redirect_uris=("http://localhost:8000/demo/callback",),

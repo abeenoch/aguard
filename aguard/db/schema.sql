@@ -11,6 +11,7 @@
 -- =====================================================================
 
 -- -- -- 0. clean slate for re-runs (objects only; roles persist) ---------
+DROP TABLE IF EXISTS rate_limit_buckets;
 DROP TABLE IF EXISTS agent_audit;
 DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS auth_codes;
@@ -141,6 +142,25 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX refresh_tokens_family_idx ON refresh_tokens (family_id);
 CREATE INDEX refresh_tokens_expires_idx ON refresh_tokens (expires_at);
 
+-- Rate-limit counters. NOT tenant data and NOT an attack target: the rows are
+-- (policy, keyed identity) -> window start + count, where the identity is a
+-- one-way hash of the caller's address or account (see aguard/ratelimit.py),
+-- so this table never lists who is being throttled.
+--
+-- Fixed windows, not a per-timestamp log: one UPSERT per attempt. A sliding
+-- window here would mean inserting one row per attempt and pruning them, which
+-- trades a round trip for exactness we do not need -- the window boundary
+-- already discussed in ratelimit.py is the cost, and the fixed-window ceiling
+-- (2x limit across a boundary) is the same one the in-process limiter would
+-- have if it counted instead of timestamping.
+CREATE TABLE rate_limit_buckets (
+  policy       text NOT NULL,
+  bucket_key   text NOT NULL,          -- "kind:sha256[:32]" from ratelimit.py
+  window_start bigint NOT NULL,        -- epoch seconds, floor(window / n)
+  count        integer NOT NULL,
+  PRIMARY KEY (policy, bucket_key, window_start)
+);
+
 -- -- -- 5. RLS: ON + FORCED, fail-closed policies --------------------------
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents FORCE ROW LEVEL SECURITY;
@@ -185,8 +205,13 @@ GRANT USAGE, SELECT ON SEQUENCE agent_audit_id_seq TO app_user, agent_readonly;
 -- AS state: auth_service owns the token tables and NOTHING else.
 -- The tenant roles get no access to tokens; the AS gets no tenant data.
 GRANT SELECT, INSERT, UPDATE, DELETE ON auth_codes, refresh_tokens TO auth_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limit_buckets TO auth_service;
 REVOKE ALL ON documents, agent_documents, agent_audit FROM auth_service;
 REVOKE ALL ON auth_codes, refresh_tokens FROM app_user, agent_readonly;
+-- Rate counters are AS state too. Denied to tenants explicitly (not merely
+-- "never granted"): a tenant that can write this table can clear its own
+-- throttle, which is the entire control evaporating.
+REVOKE ALL ON rate_limit_buckets FROM app_user, agent_readonly;
 
 -- -- -- 7. anti-escalation hardening ----------------------------------------
 ALTER ROLE agent_readonly NOLOGIN NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;

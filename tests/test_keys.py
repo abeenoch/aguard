@@ -171,3 +171,44 @@ def test_startup_keeps_keys_that_may_still_be_verifying(tmp_path):
 
     reloaded = KeyManager(key_dir, max_token_ttl=900)
     assert retired_kid in {k.kid for k in reloaded.all_keys}
+
+
+def test_rotation_by_one_worker_is_visible_to_another(tmp_path):
+    """The multi-worker property: worker B must pick up worker A's rotation.
+
+    Two KeyManagers on the same directory stand in for two processes sharing a
+    keystore. Without cross-process refresh, B keeps publishing a JWKS that no
+    longer lists A's new active key — so clients that refresh their JWKS cache
+    from B 401 against tokens A is now signing. One stat() per access catches
+    the on-disk change.
+    """
+    key_dir = tmp_path / "keys"
+    worker_a = KeyManager(key_dir)
+    worker_b = KeyManager(key_dir)
+    assert {k.kid for k in worker_a.all_keys} == {k.kid for k in worker_b.all_keys}
+
+    worker_a.rotate()                      # A rotates; B is untouched in memory
+    new_active = worker_a.active.kid
+
+    # B sees A's new active key WITHOUT being reconstructed
+    assert worker_b.active.kid == new_active
+    assert new_active in {k["kid"] for k in worker_b.jwks["keys"]}
+
+
+def test_corrupt_keystore_on_disk_is_ignored_not_fatal(tmp_path):
+    """A half-written or hand-edited store must not take a running server down.
+
+    Startup fails loudly on a corrupt store (see _load_or_create), but a server
+    that is ALREADY serving valid tokens must keep its last-known-good keys when
+    the file briefly changes to something unparseable.
+    """
+    key_dir = tmp_path / "keys"
+    km = KeyManager(key_dir)
+    good_kid = km.active.kid
+
+    # simulate a bad external write (torn atomic write, stray editor save)
+    (key_dir / "keys.json").write_text("{not valid json", encoding="utf-8")
+
+    assert km.active.kid == good_kid           # still serving the good key
+    assert good_kid in {k["kid"] for k in km.jwks["keys"]}
+

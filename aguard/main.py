@@ -31,7 +31,7 @@ from aguard.oidc.routes_register import router as register_router
 from aguard.oidc.routes_revocable import router as revocable_router
 from aguard.oidc.routes_token import router as token_router
 from aguard.oidc.stores import build_stores, stores_are_shared
-from aguard.ratelimit import build_rate_limiter
+from aguard.ratelimit import POSTGRES, build_rate_limiter
 from aguard.redact.logging import install as install_redaction
 from aguard.settings import settings
 
@@ -58,23 +58,26 @@ def _warn_if_dev_secrets() -> None:
 
 
 def _warn_if_limits_are_per_process() -> None:
-    """Say out loud that rate limits do not span workers.
+    """Say out loud when rate limits will not span workers.
 
     ``stores_are_shared()`` is the flag that means "this deployment runs more
     than one worker" (its docstring says so, and it is what the store choice
-    exists to gate). In exactly that configuration the in-process limiter is
+    exists to gate). In exactly that configuration an in-memory limiter is
     weakest: each worker enforces the full limit, so the real ceiling is
     N x RATE_LIMIT_*. Operators should hear that from the process, not from a
     comment in a file they never open.
+
+    When RATE_LIMIT_BACKEND=postgres the counters ARE shared, so the warning
+    would be false and is suppressed — a stale warning trains operators to
+    ignore the logger, which is worse than no warning.
     """
-    if stores_are_shared():
+    if stores_are_shared() and settings.rate_limit_backend != POSTGRES:
         logging.getLogger("a-guard.startup").warning(
             "RATE LIMITS ARE PER-PROCESS: authorization state is shared "
             "(STORE_BACKEND=postgres), so more than one worker is running and "
-            "each enforces the FULL limit — the effective ceiling is "
-            "N x the configured counts. Rate-limit state has no shared "
-            "backend yet; see aguard/ratelimit.py."
-        )
+            "each enforces the FULL limit — the effective ceiling is N x the "
+            "configured counts. Set RATE_LIMIT_BACKEND=postgres to share the "
+            "counters (needs the rate_limit_buckets table).")
 
 
 def create_app() -> FastAPI:
