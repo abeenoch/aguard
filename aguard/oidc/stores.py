@@ -12,6 +12,7 @@ backend is an explicit, documented decision rather than an incidental one.
 """
 from __future__ import annotations
 
+from aguard.oidc.clients import ClientRegistry, PostgresClientRegistry
 from aguard.oidc.codes import (
     AuthCodeStore,
     InMemoryAuthCodeStore,
@@ -45,3 +46,18 @@ def stores_are_shared() -> bool:
     Anything that asserts "safe for multiple workers" should gate on this
     rather than on a comment."""
     return settings.store_backend == POSTGRES
+
+
+def build_client_registry() -> ClientRegistry:
+    """The client registry matching STORE_BACKEND.
+
+    A dynamically-registered client (RFC 7591) is state a THIRD PARTY depends on:
+    an MCP host registers once and caches the client_id, then presents it on every
+    later /authorize and /token call. Kept in memory only, each restart — and so
+    each deploy — silently invalidates every such client, which the host then
+    shows as an un-fixable ``invalid_client``. The ``postgres`` backend persists
+    them (see PostgresClientRegistry).
+    """
+    if settings.store_backend == POSTGRES:
+        return PostgresClientRegistry()
+    return ClientRegistry()

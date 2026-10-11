@@ -12,6 +12,7 @@
 
 -- -- -- 0. clean slate for re-runs (objects only; roles persist) ---------
 DROP TABLE IF EXISTS rate_limit_buckets;
+DROP TABLE IF EXISTS dynamic_clients;
 DROP TABLE IF EXISTS agent_audit;
 DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS auth_codes;
@@ -161,6 +162,25 @@ CREATE TABLE rate_limit_buckets (
   PRIMARY KEY (policy, bucket_key, window_start)
 );
 
+-- Dynamically-registered OAuth clients (RFC 7591 DCR). Persisted for the same
+-- reason the token tables are: a client is AUTHENTICATION state a third party
+-- depends on. Kept in process memory only, every restart invalidates every
+-- client — which the client experiences as an un-fixable "invalid_client"
+-- because it cached a client_id the server no longer knows. (An editor extension
+-- registers once and never re-registers on its own; a deploy must not log it out.)
+-- A secret is stored HASHED (see clients.hash_secret) — never plaintext.
+CREATE TABLE dynamic_clients (
+  client_id          text PRIMARY KEY,
+  client_secret_hash text,             -- NULL = public client (PKCE is its shield)
+  redirect_uris      text[] NOT NULL,
+  allowed_scopes     text[] NOT NULL,
+  grant_types        text[] NOT NULL,
+  auth_method        text NOT NULL,
+  kind               text NOT NULL,    -- "human" | "agent"
+  created_at         bigint NOT NULL   -- ordering for the dynamic-client ceiling
+);
+CREATE INDEX dynamic_clients_created_idx ON dynamic_clients (created_at);
+
 -- -- -- 5. RLS: ON + FORCED, fail-closed policies --------------------------
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents FORCE ROW LEVEL SECURITY;
@@ -204,10 +224,10 @@ GRANT USAGE, SELECT ON SEQUENCE agent_audit_id_seq TO app_user, agent_readonly;
 
 -- AS state: auth_service owns the token tables and NOTHING else.
 -- The tenant roles get no access to tokens; the AS gets no tenant data.
-GRANT SELECT, INSERT, UPDATE, DELETE ON auth_codes, refresh_tokens TO auth_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth_codes, refresh_tokens, dynamic_clients TO auth_service;
 GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limit_buckets TO auth_service;
 REVOKE ALL ON documents, agent_documents, agent_audit FROM auth_service;
-REVOKE ALL ON auth_codes, refresh_tokens FROM app_user, agent_readonly;
+REVOKE ALL ON auth_codes, refresh_tokens, dynamic_clients FROM app_user, agent_readonly;
 -- Rate counters are AS state too. Denied to tenants explicitly (not merely
 -- "never granted"): a tenant that can write this table can clear its own
 -- throttle, which is the entire control evaporating.

@@ -185,3 +185,76 @@ def test_inmemory_reuse_detection_does_NOT_span_instances():
     # the family is NOT burned. That failure mode is asserted, not implied.
     assert not isinstance(excinfo.value, RefreshReuseError)
 
+
+
+# --------------- client registry: a DCR client survives a restart ----------
+
+
+def _require_dynamic_clients() -> None:
+    try:
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM dynamic_clients LIMIT 1")
+    except Exception:
+        close_pools()
+        pytest.skip("dynamic_clients table missing — apply aguard/db/schema.sql")
+
+
+def _clear_clients() -> None:
+    with service_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM dynamic_clients")
+
+
+def test_dynamic_clients_survive_a_restart():
+    """A DCR client (RFC 7591) is state a THIRD PARTY holds.
+
+    The host registers ONCE and caches the client_id, then presents it on every
+    later /authorize and /token call. Held in process memory only, a restart (or
+    a deploy, or a second worker) invalidates it and the host shows an
+    un-fixable `invalid_client`. Postgres is what makes the registration outlive
+    the process.
+    """
+    from aguard.oidc.clients import Client, PostgresClientRegistry
+
+    _require_dynamic_clients()
+    _clear_clients()
+
+    redirect = "http://127.0.0.1:1456/mcp/oauth/callback"
+    PostgresClientRegistry().register(Client(
+        client_id="dcr-persist-test",
+        client_secret_hash=None,
+        redirect_uris=(redirect,),
+        allowed_scopes=frozenset({"openid", "email"}),
+        grant_types=frozenset({"authorization_code", "refresh_token"}),
+        auth_method="none",
+        kind="human",
+    ))
+
+    # A fresh instance stands in for the restarted / redeployed process.
+    reborn = PostgresClientRegistry()
+    got = reborn.get("dcr-persist-test")
+    assert got is not None, "the dynamic client did not survive the restart"
+    assert got.redirect_uris == (redirect,)
+    assert got.allowed_scopes == frozenset({"openid", "email"})
+    assert got.redirect_uri_matches(redirect)
+
+    _clear_clients()
+
+
+def test_inmemory_registry_loses_clients_across_instances():
+    """Documents the gap the Postgres registry closes, so nobody 'optimises' it
+    away: the in-memory registry is per-process by construction."""
+    from aguard.oidc.clients import Client, ClientRegistry
+
+    ClientRegistry().register(Client(
+        client_id="dcr-volatile",
+        client_secret_hash=None,
+        redirect_uris=("http://127.0.0.1:1/cb",),
+        allowed_scopes=frozenset({"openid"}),
+        grant_types=frozenset({"authorization_code"}),
+        auth_method="none",
+        kind="human",
+    ))
+    assert ClientRegistry().get("dcr-volatile") is None
+

@@ -29,7 +29,11 @@ from aguard.oidc.routes_register import router as register_router
 from aguard.oidc.routes_revocable import router as revocable_router
 from aguard.oidc.routes_token import router as token_router
 from aguard.oidc.signers import build_key_manager
-from aguard.oidc.stores import build_stores, stores_are_shared
+from aguard.oidc.stores import (
+    build_client_registry,
+    build_stores,
+    stores_are_shared,
+)
 from aguard.ratelimit import POSTGRES, build_rate_limiter
 from aguard.redact.logging import install as install_redaction
 from aguard.settings import settings
@@ -95,7 +99,10 @@ def create_app() -> FastAPI:
     # (aguard/mcp/service.py). It is deliberately not mounted here.
     application = FastAPI(title="a-guard", version="0.1.0")
     application.state.keys = keys
-    application.state.registry = seed_registry()
+    # Registered clients. Durable when STORE_BACKEND=postgres: a dynamically
+    # registered client (an MCP host's DCR registration) must survive a restart,
+    # or a deploy logs it out with an "invalid_client" it cannot resolve.
+    application.state.registry = seed_registry(build_client_registry())
     # Backend chosen by STORE_BACKEND: memory (single process) or postgres
     # (shared + restart-durable). See aguard/oidc/stores.py for why this is a
     # security decision, not just an operational one.

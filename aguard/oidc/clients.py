@@ -23,6 +23,7 @@ import hmac
 import logging
 import os
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -113,20 +114,32 @@ class ClientRegistry:
     def register(self, client: Client) -> None:
         """Register a dynamic (runtime-created) client.
 
-        Enforces the duplicate-id check and the dynamic-client ceiling under
-        the lock so both hold against concurrent registrations.
+        The duplicate-id check and the ceiling hold under the lock; the durable
+        backends record the change afterwards via the persistence hooks (no-ops
+        for the in-memory registry).
         """
+        evicted: str | None = None
         with self._lock:
             if client.client_id in self._clients:
                 raise ValueError(f"duplicate client_id: {client.client_id}")
             self._clients[client.client_id] = client
             self._dynamic_order[client.client_id] = None
             while len(self._dynamic_order) > MAX_DYNAMIC_CLIENTS:
-                oldest, _ = self._dynamic_order.popitem(last=False)
-                del self._clients[oldest]
-                log.warning(
-                    "dynamic-client ceiling reached; dropped the oldest "
-                    "registration %r (seed clients are never evicted)", oldest)
+                evicted, _ = self._dynamic_order.popitem(last=False)
+                del self._clients[evicted]
+        if evicted is not None:
+            log.warning(
+                "dynamic-client ceiling reached; dropped the oldest "
+                "registration %r (seed clients are never evicted)", evicted)
+            self._drop_persisted(evicted)
+        self._persist(client)
+
+    # -- persistence hooks (overridden by the durable backend) ---------------
+    def _persist(self, client: Client) -> None:
+        """Durably record a dynamic client. No-op for the in-memory registry."""
+
+    def _drop_persisted(self, client_id: str) -> None:
+        """Forget a ceiling-evicted client. No-op for the in-memory registry."""
 
     def get(self, client_id: str) -> Client | None:
         with self._lock:
@@ -151,9 +164,77 @@ class ClientRegistry:
         return client if client.verify_secret(secret) else None
 
 
-def seed_registry() -> ClientRegistry:
+class PostgresClientRegistry(ClientRegistry):
+    """ClientRegistry backed by Postgres, so a restart KEEPS its clients.
+
+    A dynamic registration is state a THIRD PARTY depends on: an MCP host
+    registers once (RFC 7591) and caches the client_id, then presents it on every
+    later /authorize and /token call. Held in process memory only, every restart
+    — and therefore every deploy — silently invalidates every such client, and
+    the host shows `invalid_client` for a registration it has no reason to think
+    is gone. Seeded clients stay in code (seed_registry); only dynamic ones live
+    in the table.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._load()
+
+    def _load(self) -> None:
+        from aguard.db.session import service_session
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT client_id, client_secret_hash, redirect_uris,"
+                    " allowed_scopes, grant_types, auth_method, kind"
+                    " FROM dynamic_clients ORDER BY created_at DESC LIMIT %s",
+                    (MAX_DYNAMIC_CLIENTS,))
+                rows = cur.fetchall()
+        # Replay oldest-first so _dynamic_order's eviction order matches age.
+        for row in reversed(rows):
+            client = Client(
+                client_id=row[0], client_secret_hash=row[1],
+                redirect_uris=tuple(row[2]),
+                allowed_scopes=frozenset(row[3]),
+                grant_types=frozenset(row[4]),
+                auth_method=row[5], kind=row[6])
+            self._clients[client.client_id] = client
+            self._dynamic_order[client.client_id] = None
+
+    def _persist(self, client: Client) -> None:
+        from aguard.db.session import service_session
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO dynamic_clients(client_id, client_secret_hash,"
+                    " redirect_uris, allowed_scopes, grant_types, auth_method,"
+                    " kind, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
+                    " ON CONFLICT (client_id) DO UPDATE SET"
+                    " client_secret_hash = EXCLUDED.client_secret_hash,"
+                    " redirect_uris = EXCLUDED.redirect_uris,"
+                    " allowed_scopes = EXCLUDED.allowed_scopes,"
+                    " grant_types = EXCLUDED.grant_types,"
+                    " auth_method = EXCLUDED.auth_method,"
+                    " kind = EXCLUDED.kind",
+                    (client.client_id, client.client_secret_hash,
+                     list(client.redirect_uris), list(client.allowed_scopes),
+                     list(client.grant_types), client.auth_method, client.kind,
+                     int(time.time())))
+
+    def _drop_persisted(self, client_id: str) -> None:
+        from aguard.db.session import service_session
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM dynamic_clients WHERE client_id = %s",
+                            (client_id,))
+
+
+def seed_registry(registry: ClientRegistry | None = None) -> ClientRegistry:
     """Lab clients. Secrets are dev-only constants — real deployments mint
     per-client secrets and store only hashes (see hash_secret).
+
+    ``registry`` lets a caller supply a durable ClientRegistry (see
+    aguard/oidc/stores.py); the seeded clients are added on top of it.
 
     Three shapes, deliberately:
       demo-spa       public client   → PKCE is its ONLY protection
@@ -162,7 +243,8 @@ def seed_registry() -> ClientRegistry:
                                          (the read-only story starts here,
                                           long before Postgres is involved)
     """
-    registry = ClientRegistry()
+    if registry is None:
+        registry = ClientRegistry()
 
     registry.seed(Client(
         client_id="demo-spa",
