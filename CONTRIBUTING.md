@@ -33,11 +33,13 @@ mypy                     # types (config in pyproject.toml)
 pip-audit .              # dependency advisories
 ```
 
-Live server + smoke test:
+Live servers + smoke test (two services since the MCP split):
 
 ```bash
-uvicorn aguard.main:app --port 8000     # terminal 1
-python scripts/smoke.py              # terminal 2
+uvicorn aguard.main:app --port 8080           # terminal 1 — authorization server
+uvicorn aguard.mcp.service:app --port 8081    # terminal 2 — resource server
+python scripts/smoke.py                        # terminal 3 — AS + REST API
+python scripts/mcp_smoke.py                    # terminal 3 — MCP over the split
 ```
 
 ## PR checklist

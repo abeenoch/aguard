@@ -24,12 +24,13 @@ import uuid
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
 from aguard.db.session import scoped_session
 from aguard.mcp.auth import AGuardTokenVerifier, current_principal
 from aguard.mcp.principal import Principal
-from aguard.oidc.keys import KeyManager
+from aguard.oidc.validation import KeySet
 from aguard.settings import settings
 
 logger = logging.getLogger("a-guard.mcp")
@@ -61,6 +62,27 @@ def _audit(cur, principal: Principal, request_id: str,
         " rows_returned) VALUES (%s, %s, %s, %s, %s)",
         (principal.sub, principal.client_id, request_id,
          _redacted_statement(statement), rows_returned))
+
+
+#: Loopback hosts the MCP SDK protects by default. A DNS-rebinding attack needs
+#: a browser on the victim's machine to reach a server on localhost, so loopback
+#: is the threat this guards; public names/IPs are opt-in via MCP_ALLOWED_HOSTS.
+_LOOPBACK_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_LOOPBACK_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+
+
+def _transport_security() -> TransportSecuritySettings:
+    """Host/Origin allowlist for the Streamable HTTP transport.
+
+    Protection stays ON (it is a real DNS-rebinding defence), widened only by
+    exactly what the operator configured. Serving off-box without listing the
+    host here means every request is refused with 421 — a footgun worth naming.
+    """
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[*_LOOPBACK_HOSTS, *settings.mcp_allowed_hosts],
+        allowed_origins=[*_LOOPBACK_ORIGINS, *settings.mcp_allowed_origins],
+    )
 
 
 def _audit_denied(principal: Principal, request_id: str, statement: str) -> None:
@@ -139,8 +161,12 @@ def delete_document(document_id: int, ctx: Context) -> dict:
     return {"deleted": True, "id": deleted[0]}
 
 
-def build_mcp(keys: KeyManager) -> FastMCP:
-    """Construct the MCP server bound to the app's key manager.
+def build_mcp(keys: KeySet) -> FastMCP:
+    """Construct the MCP server bound to a key set.
+
+    ``keys`` is any ``KeySet``: the AS's ``KeyManager`` (single-process/tests)
+    or a ``RemoteKeyStore`` pointed at the issuer's JWKS (the split service, which
+    holds no signing key).
 
     stateless_http=True: our tokens are self-contained JWTs and the tools are
     pure request/response, so we don't need server-side MCP sessions — each
@@ -170,6 +196,7 @@ def build_mcp(keys: KeyManager) -> FastMCP:
         streamable_http_path="/mcp",
         json_response=True,   # request/response only: plain JSON, no SSE framing
         warn_on_duplicate_tools=False,
+        transport_security=_transport_security(),
     )
     for fn in (list_documents, read_document, delete_document):
         server.add_tool(fn)

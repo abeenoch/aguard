@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>a-guard — identity, redacted logs, a database that refuses the agent</title>
+  <meta name="description" content="A-guard gives an MCP resource server a real authorization server, redacts PII out of every log, and lets Postgres refuse what an agent tries to destroy.">
+  <style>
+    :root {
+      --bg: #06070c; --bg2: #0b0d14; --panel: #10131c;
+      --ink: #e8eaf0; --muted: #9aa6b8;
+      --gold: #f5c542; --red: #ff5c5c; --red-dist: rgba(255,92,92,.35);
+      --sing: rgba(245,197,66,.85);
+      --serif: "Inter","SF Pro Display",system-ui,-apple-system,sans-serif;
+      --mono: ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{
+      background:
+        radial-gradient(1200px 700px at 78% -10%, rgba(245,197,66,.06), transparent 60%),
+        radial-gradient(900px 600px at 10% 110%, rgba(90,130,255,.07), transparent 60%),
+        var(--bg);
+      color:var(--ink); font-family:var(--serif); line-height:1.6; min-height:100vh; -webkit-font-smoothing:antialiased;
+    }
+    .wrap{max-width:1180px;margin:0 auto;padding:0 32px}
+    .site-header{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);background:rgba(6,7,12,.72);border-bottom:1px solid rgba(255,255,255,.06)}
+    .site-header .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+    .brand{font-weight:700;letter-spacing:.04em;color:var(--gold);text-decoration:none;font-size:1.05rem}
+    .brand span{color:var(--ink)}
+    nav a{color:var(--muted);text-decoration:none;margin-left:1.4rem;font-size:.92rem;transition:color .2s}
+    nav a:hover{color:var(--ink)}
+
+    .hero{position:relative;padding:88px 0 64px;overflow:hidden}
+    .hero::before{content:"";position:absolute;inset:0;pointer-events:none;background:
+        radial-gradient(900px 500px at 85% 120%, rgba(245,197,66,.10), transparent 60%),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0, rgba(255,255,255,.012) 1px, transparent 1px, transparent 3px)}
+    .hero .wrap{display:grid;grid-template-columns:1.15fr .85fr;gap:48px;align-items:center;position:relative;z-index:2}
+    .eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:.82rem;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:18px}
+    .eyebrow::before{content:"";width:26px;height:2px;background:var(--gold);border-radius:2px}
+    h1{font-size:clamp(2rem,4.4vw,3.4rem);line-height:1.1;letter-spacing:-.02em;margin:0 0 22px;max-width:16ch}
+    h1 .accent{color:var(--gold)}
+    .lede{font-size:1.12rem;color:var(--muted);max-width:54ch;line-height:1.6;margin-bottom:28px}
+    .lede b{color:var(--ink)}
+    .ghost-btn{appearance:none;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.04);color:var(--ink);padding:12px 20px;border-radius:8px;cursor:pointer;font:inherit;font-weight:600;transition:background .2s,border-color .2s,transform .1s}
+    .ghost-btn:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.35)}
+    .ghost-btn:active{transform:translateY(1px)}
+
+    .pii-card{background:var(--panel);border:1px solid rgba(255,255,255,.10);border-radius:10px;padding:18px 20px;position:relative;overflow:hidden;min-height:140px}
+    .pii-card .label{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    .pii-card .value{font-family:var(--mono);font-size:1.05rem;color:var(--ink);word-break:break-all}
+    .pii-card .redacted{color:var(--muted);position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;text-align:center;padding:0 14px;opacity:0;transform:scale(.96);pointer-events:none;transition:opacity .5s,transform .5s}
+    .pii-card .redacted.show{opacity:1;transform:scale(1)}
+    .audit-row{font-family:var(--mono);font-size:.74rem;color:var(--muted);padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+    .audit-row b{color:var(--red)}
+    .audit-strip{margin-top:14px;display:none}
+    .audit-strip.show{display:block}
+
+    /* --- shared section chrome --- */
+    section:not(.hero){padding:84px 0;border-top:1px solid rgba(255,255,255,.06)}
+    .section-head{max-width:660px;margin-bottom:40px}
+    .section-head h2{font-size:clamp(1.6rem,3vw,2.3rem);letter-spacing:-.02em;margin:0 0 12px}
+    .section-head p{color:var(--muted);font-size:1.04rem;margin:0}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+    #demo .grid{grid-template-columns:1.7fr 1fr}
+    .feat{background:var(--panel);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:26px}
+    .feat .num{font-family:var(--mono);font-size:.74rem;letter-spacing:.16em;color:var(--gold);margin-bottom:14px}
+    .feat h3{font-size:1.12rem;margin:0 0 10px}
+    .feat p{color:var(--muted);font-size:.95rem;margin:0}
+    .feat b{color:var(--ink)}
+    code{font-family:var(--mono);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);padding:2px 7px;border-radius:6px;font-size:.86em}
+
+    /* --- cupid illustration (SVG groups are placed with CSS transforms) --- */
+    .cupid-wrap{align-self:center}
+    .cupid{background:var(--panel);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:22px 24px 24px}
+    .cupid svg{display:block;width:100%;height:auto;overflow:visible}
+    .cupid .bow,.cupid .body{transform:translate(186px,188px)}
+    .cupid .wing{transform:translate(96px,44px);fill:none;stroke:rgba(245,197,66,.55);stroke-width:2;stroke-linecap:round}
+    .cupid .bow path{fill:none;stroke:rgba(245,197,66,.85);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+    .cupid .bow path:first-child{fill:rgba(245,197,66,.18)}
+    .cupid .arrow{stroke:var(--ink);stroke-width:2}
+    .cupid .body path{fill:none;stroke:var(--ink);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+    .cupid .head{fill:rgba(245,197,66,.16);stroke:var(--gold);stroke-width:2.5}
+    .aim-dot{fill:var(--red);transform-box:fill-box;transform-origin:center}
+    .pii-cards{display:grid;gap:12px;margin-top:18px}
+    .pii-card.hit{border-color:var(--red-dist)}
+    @keyframes arrow-flight{from{transform:translate(0,0);opacity:1}to{transform:translate(150px,-72px);opacity:0}}
+    .cupid.shooting .arrow,.cupid.shooting .bow polygon{animation:arrow-flight .5s cubic-bezier(.45,0,.9,.45) forwards}
+    @keyframes aim-flash{0%{transform:scale(1)}45%{transform:scale(2.6)}100%{transform:scale(1)}}
+    .cupid.shooting .aim-dot{animation:aim-flash .6s ease-out .25s}
+
+    /* --- footer --- */
+    .site-footer{border-top:1px solid rgba(255,255,255,.06);padding:26px 0 42px;color:var(--muted);font-size:.85rem}
+    .site-footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .site-footer a{color:var(--muted);text-decoration:none}
+    .site-footer a:hover{color:var(--ink)}
+
+    @media (max-width:880px){
+      .hero .wrap{grid-template-columns:1fr}
+      .grid,#demo .grid{grid-template-columns:1fr}
+      .wrap{padding:0 20px}
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/">a<span>-guard</span></a>
+      <nav><a href="#how">How it works</a><a href="#demo">Demo</a></nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div>
+          <div class="eyebrow"><span>a-guard</span></div>
+          <h1>Identity for every agent. A <span class="accent">database that refuses</span> what they try to delete.</h1>
+          <p class="lede">
+            a-guard is an authorization server + a resource server that <b>verifies every token</b>,
+            <b>redacts PII from every log</b>, and lets <b>Postgres itself</b> enforce what an agent may
+            and may not touch. No SDK secrets, no audit trails you can't trust.
+          </p>
+          <button class="ghost-btn" id="shoot">Release the arrow</button>
+        </div>
+        <div class="cupid-wrap">
+          <div class="cupid">
+            <svg viewBox="0 0 420 260" role="img" aria-label="a guard cupid drawing a bow at PII data">
+              <circle class="aim-dot" cx="208" cy="130" r="7" pointer-events="none"/>
+              <g class="bow">
+                <path d="M-60,-26 L-46,-30 L-44,30 L-60,26 Z"/>
+                <path d="M-30,-30 L-20,0 L-30,30"/>
+                <path d="M-30,-30 L-14,-30"/>
+                <path d="M-14,-30 L-8,0 L-14,30"/>
+                <line class="arrow" x1="-8" y1="0" x2="22" y2="-58" style="stroke-dasharray:4 6;"/>
+                <polygon points="22,-58 30,-58 26,-50" fill="#fff"/>
+              </g>
+              <g class="body">
+                <path d="M0,0 C-26,-34 -40,0 -16,0 C-16,0 -24,-16 -8,-16 C-8,-16 -4,-30 0,-30"/>
+                <circle class="head" cx="0" cy="-34" r="16"/>
+              </g>
+              <path class="wing" d="M80,150 C80,150 50,90 40,70 C30,50 90,120 90,120" stroke-dasharray="4 4" opacity=".5"/>
+            </svg>
+            <div class="pii-cards">
+              <div class="pii-card" data-target="alice@example.com">
+                <div class="label">e-mail</div><div class="value">alice@example.com</div>
+                <div class="redacted">REDACTED</div>
+              </div>
+              <div class="pii-card" data-target="4111 1111 1111 1111">
+                <div class="label">card</div><div class="value">4111 1111 1111 1111</div>
+                <div class="redacted">REDACTED</div>
+              </div>
+              <div class="pii-card" data-target="+1 (555) 019-2021">
+                <div class="label">phone</div><div class="value">+1 (555) 019-2021</div>
+                <div class="redacted">REDACTED</div>
+              </div>
+            </div>
+            <div class="audit-strip" aria-live="polite">
+              <div class="audit-row">audit: pii email → <b>redacted</b> (log sink)</div>
+              <div class="audit-row">audit: card number → <b>redacted</b> (log sink)</div>
+              <div class="audit-row">audit: phone → <b>redacted</b> (log sink)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Three guarantees, three layers of truth</h2>
+          <p>One identity surface for every agent. No SDK secrets. No audit trail you can't verify.</p>
+        </div>
+        <div class="grid">
+          <div class="feat">
+            <div class="num">01 · AUTH</div>
+            <h3>OpenID Connect, audience-bound</h3>
+            <p>The resource server verifies every token against the AS's public JWKS — it holds <b>no signing key</b>. A token minted for <b>/api</b> is refused at <b>/mcp</b>.</p>
+          </div>
+          <div class="feat">
+            <div class="num">02 · REDACTION</div>
+            <h3>PII never leaves the service</h3>
+            <p>Every log record is redacted at creation. Raw identities, money, and tokens stay inside — and never reach the agent's context window.</p>
+          </div>
+          <div class="feat">
+            <div class="num">03 · DATABASE</div>
+            <h3>The database says no</h3>
+            <p>Row-level security + column grants + a separate agent pool mean an agent's <b>delete is refused by Postgres</b>. <b>rows=0</b>, nothing changed.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>See it in one command</h2>
+          <p>Both services, a real MCP client, and the audit trail where <b>rows=0</b> is the agent's refused delete.</p>
+        </div>
+        <div class="grid">
+          <div class="feat" style="text-align:center;">
+            <div class="num" style="font-family:var(--mono);text-align:center;">bash scripts/demo.sh</div>
+            <p style="text-align:center;">_runs both services · paced for recording · leave them up with <code>DEMO_KEEP=1</code>_</p>
+          </div>
+          <div class="feat" style="border-color:rgba(245,197,66,.3);">
+            <div class="num">04 · AUDIT</div>
+            <h3>rows=0 is the refusal</h3>
+            <p>An agent's delete is swallowed by Postgres. The audit log records the attempt — <b>and nothing changed.</b></p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>a-guard — identity for every agent, redacted logs, a database that refuses.</span>
+      <span><a href="https://github.com/abeenoch/aguard">github.com/abeenoch/aguard</a> · MIT</span>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      var cupid = document.querySelector('.cupid');
+      var btn = document.getElementById('shoot');
+      var cards = Array.prototype.slice.call(document.querySelectorAll('.pii-card'));
+      var strip = document.querySelector('.audit-strip');
+      if (!cupid || !btn) return;
+
+      var busy = false;
+      function shoot() {
+        if (busy) return;
+        busy = true;
+        cupid.classList.remove('shooting');
+        void cupid.offsetWidth; // restart the CSS animations
+        cupid.classList.add('shooting');
+
+        cards.forEach(function (card, i) {
+          setTimeout(function () {
+            card.classList.add('hit');
+            card.querySelector('.redacted').classList.add('show');
+          }, 380 + i * 260);
+        });
+
+        setTimeout(function () {
+          if (strip) strip.classList.add('show');
+        }, 380 + cards.length * 260);
+
+        setTimeout(function () {
+          cupid.classList.remove('shooting');
+          busy = false;
+        }, 1800 + cards.length * 260);
+      }
+
+      btn.addEventListener('click', shoot);
+    })();
+  </script>
+</body>
+</html>
+

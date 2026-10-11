@@ -16,10 +16,10 @@ import time
 from dataclasses import asdict, dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import Protocol
 
-import jwt  # PyJWT: serialization only — all policy lives in this codebase
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 ALGORITHM = "RS256"
 KEY_SIZE = 2048
@@ -52,6 +52,74 @@ def jwk_thumbprint(n: int, e: int) -> str:
         sort_keys=True,
     )
     return _b64u(hashlib.sha256(canonical.encode("ascii")).digest())
+
+
+class Signer(Protocol):
+    """The signing surface every key source must provide.
+
+    A local key (file/env) can hand back a private key; a KMS/HSM key cannot —
+    it can only sign a byte string. Depending on this Protocol rather than on a
+    private key is what lets the SAME token-minting code run against both, and
+    is the reason ``encode_jwt`` never calls ``jwt.encode``.
+    """
+
+    @property
+    def kid(self) -> str: ...
+    @property
+    def public_pem(self) -> bytes: ...
+    def public_jwk(self) -> dict: ...
+    def sign(self, signing_input: bytes) -> bytes: ...
+
+
+def public_jwk_from_numbers(n: int, e: int) -> dict:
+    """Public half as a JWK. Structurally cannot contain private members
+    (`d`, `p`, `q`) — they are never read here. Shared by every key source
+    (file, env, KMS) so a KMS key publishes byte-identically to a local one."""
+    return {
+        "kty": "RSA",
+        "use": "sig",
+        "alg": ALGORITHM,
+        "kid": jwk_thumbprint(n, e),
+        "n": _b64u_int(n),
+        "e": _b64u_int(e),
+    }
+
+
+def public_key_from_pem(pem: str | bytes) -> rsa.RSAPublicKey:
+    """Parse a public OR private PEM down to its RSA public key.
+
+    Handy for KMS/env sources, which usually hand back a public PEM: we derive
+    `kid` and the JWK from the same code path as a locally generated key."""
+    data = pem.encode() if isinstance(pem, str) else pem
+    key = serialization.load_pem_public_key(data)
+    if not isinstance(key, rsa.RSAPublicKey):
+        raise RuntimeError("key is not an RSA public key")
+    return key
+
+
+def encode_jwt(key: Signer, claims: dict, *,
+               headers: dict | None = None) -> str:
+    """Build an RS256 JWS compact serialization, signed by ``key``.
+
+    Hand-assembled rather than ``jwt.encode`` so that a KMS/HSM signer (which
+    exposes only a ``sign(bytes) -> bytes`` primitive, never a private key) goes
+    through the SAME code path as a local key. PyJWT is still used to verify.
+
+    The header pins alg=RS256 and injects the key's kid; nothing from the caller
+    can change the algorithm.
+    """
+    protected = {"alg": ALGORITHM, "typ": "JWT", "kid": key.kid,
+                 **(headers or {})}
+    # kid and alg are forced ABOVE the caller's headers on purpose: a caller
+    # must not be able to override the algorithm or point at another key.
+    protected["alg"] = ALGORITHM
+    protected["kid"] = key.kid
+    signing_input = (
+        _b64u(json.dumps(protected, separators=(",", ":")).encode("utf-8"))
+        + "." + _b64u(json.dumps(claims, separators=(",", ":")).encode("utf-8"))
+    ).encode("ascii")
+    signature = key.sign(signing_input)
+    return signing_input.decode("ascii") + "." + _b64u(signature)
 
 
 @dataclass
@@ -103,14 +171,14 @@ class ManagedKey:
         """Public half as a JWK. Structurally cannot contain private members
         (`d`, `p`, `q`) — they are never read here."""
         pub = self.private_key.public_key().public_numbers()
-        return {
-            "kty": "RSA",
-            "use": "sig",
-            "alg": ALGORITHM,
-            "kid": self.kid,
-            "n": _b64u_int(pub.n),
-            "e": _b64u_int(pub.e),
-        }
+        return public_jwk_from_numbers(pub.n, pub.e)
+
+    def sign(self, signing_input: bytes) -> bytes:
+        """RSASSA-PKCS1-v1_5 over SHA-256 (what RS256 means), returning the raw
+        signature bytes. Local keys sign here; a KMS key signs through the same
+        interface without ever exposing its private half."""
+        return self.private_key.sign(
+            signing_input, padding.PKCS1v15(), hashes.SHA256())
 
 
 class KeyManager:
@@ -306,7 +374,44 @@ class KeyManager:
         with self._lock:
             self._refresh_if_changed()
             active = next(k for k in self._keys if k.status == "active")
-            kid, pem = active.kid, active.pem
-        merged = {"kid": kid, **(headers or {})}
-        return jwt.encode(claims, pem, algorithm=ALGORITHM, headers=merged)
+        # Build the JWS ourselves so a KMS-backed key (which has no private
+        # `pem`) flows through the same path — see encode_jwt(). The active key
+        # was selected under the lock, so kid and signature agree even if
+        # another thread rotates mid-call.
+        return encode_jwt(active, claims, headers=headers)
+
+
+class StaticKeyManager:
+    """A fixed key set built from explicit signers (env PEMs, or a KMS).
+
+    Mirrors the surface the rest of the app uses — ``all_keys``, ``jwks``,
+    ``sign``, ``active`` — but has no lifecycle: it neither generates nor
+    persists keys, and for a KMS source it never holds private material at all.
+    Rotation is the operator's (env) or the provider's (KMS) job.
+
+    It is deliberately NOT a ``KeyManager``: a KMS-backed deployment must not be
+    able to grow a keystore on disk by accident, and this type has no code path
+    that writes one.
+    """
+
+    def __init__(self, signers: list[Signer], *, active_index: int = 0) -> None:
+        if not signers:
+            raise ValueError("a key source must provide at least one signer")
+        self._signers = list(signers)
+        self._active = self._signers[active_index]
+
+    @property
+    def active(self) -> Signer:
+        return self._active
+
+    @property
+    def all_keys(self) -> list[Signer]:
+        return list(self._signers)
+
+    @property
+    def jwks(self) -> dict:
+        return {"keys": [s.public_jwk() for s in self._signers]}
+
+    def sign(self, claims: dict, *, headers: dict | None = None) -> str:
+        return encode_jwt(self._active, claims, headers=headers)
 

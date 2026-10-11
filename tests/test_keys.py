@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from aguard.oidc.keys import KeyManager, jwk_thumbprint
 from aguard.oidc.validation import verify_access_token
+from aguard.settings import settings
 
 
 def _b64u_dec(value: str) -> bytes:
@@ -117,7 +118,7 @@ def test_retire_expired_measures_the_window_from_retirement(tmp_path):
     km._persist()
 
     token = km.sign({
-        "iss": "http://localhost:8000", "sub": "usr_alice",
+        "iss": settings.issuer, "sub": "usr_alice",
         "aud": "a-guard-api", "scope": "orders:read", "roles": ["human"],
         "iat": int(time.time()), "exp": int(time.time()) + 900,
     })

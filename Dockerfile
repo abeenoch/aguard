@@ -25,5 +25,9 @@ RUN useradd --create-home --uid 1000 guard \
  && chown -R guard:guard /srv/a-guard
 USER guard
 
-EXPOSE 8000
-CMD ["uvicorn", "aguard.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# One image, two services (see docker-compose.yml): the authorization server
+# (this default CMD, :8080) and the MCP resource server
+# (`uvicorn aguard.mcp.service:app --port 8081`, overridden per-service). Both
+# are noted here so the image is usable without compose too.
+EXPOSE 8080 8081
+CMD ["uvicorn", "aguard.main:app", "--host", "0.0.0.0", "--port", "8080"]

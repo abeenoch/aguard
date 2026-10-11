@@ -18,9 +18,10 @@ from fastapi.testclient import TestClient
 
 from aguard.main import app
 from aguard.oidc.pkce import challenge_s256, generate_verifier
+from aguard.settings import settings
 
 client = TestClient(app)
-REDIRECT = "http://localhost:8000/demo/callback"
+REDIRECT = f"{settings.issuer}/demo/callback"
 SCOPE_RE = re.compile(r'name="scope" value="([^"]*)"')
 
 

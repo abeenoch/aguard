@@ -17,6 +17,25 @@ from aguard.settings import settings
 keys = app.state.keys
 
 
+def _reheader_kid(token: str, kid: str) -> str:
+    """Rewrite a token's `kid` header — what an attacker does to point a valid
+    signature at a key we do not publish.
+
+    ``sign()`` will not do this for us: ``encode_jwt`` pins `alg` and `kid` so a
+    caller cannot mislabel a token. The test therefore forges the header the
+    honest way. Note the signature no longer matches, which is the point: the
+    validator rejects the unknown kid BEFORE it ever checks the signature."""
+    import json
+    header_b64, payload_b64, sig_b64 = token.split(".")
+    header = json.loads(
+        base64.urlsafe_b64decode(header_b64 + "=" * (-len(header_b64) % 4)))
+    header["kid"] = kid
+    new_header = base64.urlsafe_b64encode(
+        json.dumps(header, separators=(",", ":")).encode()
+    ).rstrip(b"=").decode()
+    return f"{new_header}.{payload_b64}.{sig_b64}"
+
+
 def _valid_claims(**overrides) -> dict:
     now = int(time.time())
     claims = {
@@ -37,7 +56,7 @@ def test_valid_token_round_trips():
 
 
 def test_unknown_kid_rejected():
-    raw = keys.sign(_valid_claims(), headers={"kid": "attacker-kid-123"})
+    raw = _reheader_kid(keys.sign(_valid_claims()), "attacker-kid-123")
     with pytest.raises(TokenValidationError, match="kid"):
         verify_access_token(raw, keys=keys)
 
@@ -58,7 +77,7 @@ def test_alg_none_rejected():
 def test_rs256_token_from_another_key_rejected():
     # a validly-signed token with a kid we don't know: signature could be
     # perfect, we still reject — we only trust OUR published keys
-    raw = keys.sign(_valid_claims(), headers={"kid": "rotated-away-2024"})
+    raw = _reheader_kid(keys.sign(_valid_claims()), "rotated-away-2024")
     with pytest.raises(TokenValidationError, match="kid"):
         verify_access_token(raw, keys=keys)
 

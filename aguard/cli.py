@@ -412,7 +412,8 @@ def cmd_init(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
     print("\nready. next:\n"
-          "  python -m uvicorn aguard.main:app --port 8000\n"
+          "  python -m uvicorn aguard.main:app --port 8080        # AS\n"
+          "  python -m uvicorn aguard.mcp.service:app --port 8081 # resource server\n"
           "  python scripts/agctl.py verify\n"
           "  python scripts/mcp_smoke.py")
     return 0

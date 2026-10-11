@@ -15,7 +15,7 @@ from aguard.oidc.validation import verify_access_token
 from aguard.settings import settings
 
 client = TestClient(app)
-REDIRECT = "http://localhost:8000/demo/callback"
+REDIRECT = f"{settings.issuer}/demo/callback"
 MCP_RESOURCE = settings.mcp_resource_id
 
 
@@ -69,8 +69,16 @@ def test_oidc_and_rfc8414_same_document():
 
 
 def test_rfc9728_protected_resource_served():
-    doc = client.get("/.well-known/oauth-protected-resource").json()
-    assert doc["authorization_servers"] == [settings.issuer]
+    """RFC 9728 metadata is served by the RESOURCE server (its own service),
+    not the AS — it describes that resource and names the ASs that may issue for
+    it. The MCP SDK derives the document from the configured resource URL."""
+    from aguard.mcp.service import create_mcp_app
+    with TestClient(create_mcp_app()) as mcp:
+        doc = mcp.get("/.well-known/oauth-protected-resource/mcp").json()
+    # The SDK models URLs as AnyHttpUrl, which re-serializes the issuer with a
+    # trailing slash; compare on the normalized value (a client must, and the
+    # token's `iss` is what ultimately has to match).
+    assert [s.rstrip("/") for s in doc["authorization_servers"]] == [settings.issuer]
     assert doc["resource"] == MCP_RESOURCE
     assert MCP_RESOURCE in settings.allowed_resources
     assert "header" in doc["bearer_methods_supported"]

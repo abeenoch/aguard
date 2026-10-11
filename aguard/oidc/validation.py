@@ -23,11 +23,27 @@ Deliberate properties:
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any, Protocol
+
 import jwt as pyjwt
 from jwt import PyJWKError  # noqa: F401  (kept for clarity of failure modes)
 
-from aguard.oidc.keys import ALGORITHM, KeyManager
+from aguard.oidc.keys import ALGORITHM
 from aguard.settings import settings
+
+
+class KeySet(Protocol):
+    """What validation needs from a key source: a list of keys, each exposing
+    ``.kid`` and ``.public_pem``.
+
+    Satisfied structurally by both ``KeyManager`` (the AS, which also signs) and
+    ``RemoteKeyStore`` (a split resource server, which only verifies). Keeping
+    validation dependent on this Protocol rather than on ``KeyManager`` is what
+    lets the resource server verify without holding a signing key."""
+
+    @property
+    def all_keys(self) -> Sequence[Any]: ...
 
 
 class TokenValidationError(Exception):
@@ -35,10 +51,20 @@ class TokenValidationError(Exception):
     token payloads are NOT echoed into it)."""
 
 
+class UnknownKeyError(TokenValidationError):
+    """The token's `kid` is not in the current key set.
+
+    Split out from the other failures for one reason: a REMOTE key source can
+    act on it. An unknown kid is what a key rotation looks like to a resource
+    server whose JWKS cache predates it, so the verifier may refresh once and
+    retry — whereas refreshing on an expired/forged token would let anyone
+    trigger JWKS fetches (a cache-busting DoS)."""
+
+
 def verify_access_token(
     raw: str,
     *,
-    keys: KeyManager,
+    keys: KeySet,
     issuer: str | None = None,
     audience: str | None = None,
     leeway: int | None = None,
@@ -73,7 +99,7 @@ def verify_access_token(
         raise TokenValidationError("missing kid header")
     key = next((k for k in keys.all_keys if k.kid == kid), None)
     if key is None:
-        raise TokenValidationError("kid not in JWKS")
+        raise UnknownKeyError("kid not in JWKS")
 
     # Cached on the key (a pure function of immutable PEM material), so this is
     # a lookup rather than a reconstruction on every validated request.

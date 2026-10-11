@@ -23,3 +23,7 @@ pytest.err
 # Tool caches (ruff/mypy write these into the repo root)
 .ruff_cache/
 .mypy_cache/
+
+# Generated demo artifacts (rebuild with scripts/demo.sh; see docs/DEMO_SCRIPT.md)
+docs/demo.cast
+docs/demo-transcript.txt

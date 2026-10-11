@@ -30,5 +30,20 @@ for _name, _value in {
     # them order-dependent — disable the cache here and cover it explicitly in
     # tests/test_rate_limit.py (test_readyz_reuses_its_result_briefly).
     "READYZ_CACHE_SECONDS": "0",
+    # Pin the limiter backend for the suite regardless of the ambient .env:
+    # these tests assert the in-process DEFAULT, and a developer running with
+    # RATE_LIMIT_BACKEND=postgres must not see them fail. The shared backend is
+    # covered on its own terms in tests/test_rate_limit_shared.py.
+    "RATE_LIMIT_BACKEND": "memory",
+    # Pin the issuer/resource set so the suite does not depend on how a given
+    # deployment is exposed. Tests describe the code's behaviour; a host serving
+    # an http issuer on a public IP (fine for a demo, refused by the DCR
+    # redirect policy for dynamic clients) would otherwise change their outcome.
+    # ALLOWED_RESOURCES must move with these — they are coupled.
+    "OIDC_ISSUER": "http://localhost:8080",
+    "MCP_RESOURCE_URL": "http://localhost:8081",
+    "MCP_RESOURCE_ID": "http://localhost:8081/mcp",
+    "ALLOWED_RESOURCES": ("http://localhost:8081/mcp,"
+                          "http://localhost:8080/api"),
 }.items():
     os.environ.setdefault(_name, _value)

@@ -6,15 +6,15 @@ Surface:
   GET /jwks                             public signing keys (rotation-aware)
   GET /.well-known/openid-configuration OIDC discovery document
 
-Later milestones mount /authorize, /token, /userinfo, /introspect, the
-protected resource API, and the MCP Streamable HTTP resource server at /mcp.
+The MCP resource server is NO LONGER mounted here — it is its own service
+(aguard/mcp/service.py) on its own port, so a resource-server compromise is not
+an authorization-server compromise. See SECURITY.md and docs/DESIGN.md.
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -22,14 +22,13 @@ from fastapi.responses import JSONResponse
 
 from aguard.api.routes import router as api_router
 from aguard.db.session import service_session
-from aguard.mcp.server import build_mcp
 from aguard.oidc.clients import seed_registry
-from aguard.oidc.keys import KeyManager
 from aguard.oidc.metadata import router as metadata_router
 from aguard.oidc.routes_auth import router as auth_router
 from aguard.oidc.routes_register import router as register_router
 from aguard.oidc.routes_revocable import router as revocable_router
 from aguard.oidc.routes_token import router as token_router
+from aguard.oidc.signers import build_key_manager
 from aguard.oidc.stores import build_stores, stores_are_shared
 from aguard.ratelimit import POSTGRES, build_rate_limiter
 from aguard.redact.logging import install as install_redaction
@@ -84,26 +83,17 @@ def create_app() -> FastAPI:
     # The keystore prunes retired keys at startup, but only once it knows how
     # long a token may outlive the key that signed it: the longest JWT TTL we
     # issue, plus the clock-skew leeway every validator is allowed.
-    keys = KeyManager(
+    # KEY_SOURCE selects file (default) / env / aws-kms / gcp-kms / vault.
+    # A misconfigured source raises HERE rather than silently generating a key.
+    keys = build_key_manager(
         settings.key_dir,
         max_token_ttl=max(settings.access_token_ttl, settings.id_token_ttl)
         + settings.clock_skew_leeway,
     )
 
-    # MCP resource server. build_mcp() wires the SDK's bearer middleware
-    # (RFC 9728 discovery + audience binding); streamable_http_app() returns
-    # the mountable Starlette app, and session_manager.run() must stay active
-    # for the life of the process — hence the lifespan below.
-    mcp_server = build_mcp(keys)
-    mcp_app = mcp_server.streamable_http_app()
-    mcp_session_manager = mcp_server.session_manager
-
-    @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        async with mcp_session_manager.run():
-            yield
-
-    application = FastAPI(title="a-guard", version="0.1.0", lifespan=lifespan)
+    # NOTE: the MCP resource server is a SEPARATE service on its own port
+    # (aguard/mcp/service.py). It is deliberately not mounted here.
+    application = FastAPI(title="a-guard", version="0.1.0")
     application.state.keys = keys
     application.state.registry = seed_registry()
     # Backend chosen by STORE_BACKEND: memory (single process) or postgres
@@ -223,19 +213,6 @@ def create_app() -> FastAPI:
     def jwks() -> dict:
         # Public keys only — ManagedKey.public_jwk() structurally omits `d`.
         return keys.jwks
-
-    # Attach the MCP ASGI app at EXACTLY /mcp. Neither mount target works:
-    #   * Mount("/")    swallows every unmatched path, which disables
-    #                   Starlette's trailing-slash redirects app-wide
-    #                   (GET /login/ stops redirecting to /login)
-    #   * Mount("/mcp") only matches "/mcp/" (a Mount appends a path segment),
-    #                   so POST /mcp would 307-redirect — fatal for MCP clients
-    # A plain Starlette Route matches the exact path and leaves the rest of the
-    # router untouched. Note a Route does NOT strip the prefix, so the MCP
-    # app's own route stays "/mcp" (see build_mcp). The sub-app keeps its
-    # bearer middleware, so /mcp remains authenticated.
-    from starlette.routing import Route
-    application.router.routes.append(Route("/mcp", endpoint=mcp_app))
 
     return application
 

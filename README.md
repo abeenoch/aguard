@@ -41,7 +41,7 @@ from fastapi import Depends, FastAPI, Request
 from aguard import ResourceServerGuard
 
 guard = ResourceServerGuard(
-    issuer="http://localhost:8000",         # the a-guard AS
+    issuer="http://localhost:8080",         # the a-guard AS
     audience="http://localhost:9000/mcp",   # YOUR resource id
 )
 app = FastAPI()
@@ -76,7 +76,11 @@ pip install -e ".[dev]"
 #   (Run without --pg-password to just generate .env, then fill it in.)
 python scripts/agctl.py init --pg-password <your-postgres-password>
 
-python -m uvicorn aguard.main:app --port 8000
+# Two services, two ports. The authorization server issues tokens; the MCP
+# resource server is a separate deployable that holds NO signing key and
+# verifies tokens via the AS's JWKS.
+python -m uvicorn aguard.main:app --port 8080            # authorization server
+python -m uvicorn aguard.mcp.service:app --port 8081     # MCP resource server
 ```
 
 Expected tail of `init`:
@@ -106,11 +110,28 @@ psql -U postgres -d agent_auth -f aguard/db/schema.sql
 ```bash
 python scripts/agctl.py verify     # redaction self-check, pass/fail
 python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
-python scripts/mcp_smoke.py        # real MCP client against a live server
-curl -s localhost:8000/readyz      # readiness: database + keystore
-pytest                             # 260 tests
+python scripts/mcp_smoke.py        # real MCP client against a live resource server
+curl -s localhost:8080/readyz      # AS readiness: database + keystore
+curl -s localhost:8081/readyz      # resource server readiness: JWKS + database
+pytest                             # 278 tests
 ruff check . && mypy               # lint + types (also gates CI)
 ```
+
+### One-command demo
+
+The whole story on one screen — both services, a real MCP client, and the audit
+trail where `rows=0` is the agent's refused delete:
+
+```bash
+bash scripts/demo.sh                      # run it
+DEMO_PAUSE=1.0 bash scripts/demo.sh       # paced, for recording
+DEMO_KEEP=1 bash scripts/demo.sh          # leave the services running after
+```
+
+It starts the services it needs (and reuses any already running), waits for
+readiness, runs the MCP flow, prints the audit rows, shows redaction, then stops
+what it started. Recording? The storyboard, narration and export commands are in
+[docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
 ### Demo credentials (dev only — override in `.env` for anything shared)
 
@@ -175,15 +196,17 @@ Request ──▶ auth middleware (JWT: sig/iss/aud/exp/scope → principal)
 
 ## MCP resource server (Streamable HTTP, OAuth-protected)
 
-`/mcp` is a real MCP server speaking **Streamable HTTP**. It is protected by
-the same authorization server as everything else — an MCP client with no token
-gets a `401` carrying an RFC 9728 `resource_metadata` pointer, follows it to
-discover our AS, registers (RFC 7591 DCR), runs code + PKCE, and asks for a
-token audience-bound to this resource (RFC 8707):
+`/mcp` is a real MCP server speaking **Streamable HTTP**, running as its **own
+service** on its own port (`http://localhost:8081/mcp`). It holds **no signing
+key**: it fetches the AS's JWKS and verifies tokens itself, so a resource-server
+compromise is not an AS compromise. An MCP client with no token gets a `401`
+carrying an RFC 9728 `resource_metadata` pointer, follows it to discover our AS,
+registers (RFC 7591 DCR), runs code + PKCE, and asks for a token audience-bound
+to this resource (RFC 8707):
 
 ```json
 POST /token
-grant_type=client_credentials&resource=http://localhost:8000/mcp
+grant_type=client_credentials&resource=http://localhost:8081/mcp
 ```
 
 Three tools — and the third is the point:
@@ -212,7 +235,7 @@ Add to `cline_mcp_settings.json` (or use the in-app Remote Servers tab):
   "mcpServers": {
     "a-guard-documents": {
       "type": "streamableHttp",
-      "url": "http://localhost:8000/mcp",
+      "url": "http://localhost:8081/mcp",
       "disabled": false,
       "autoApprove": []
     }
@@ -246,9 +269,10 @@ Full walkthrough, recording beats and post-run evidence:
 ### Prove it
 
 ```bash
-uvicorn aguard.main:app --port 8000          # terminal 1
-python scripts/mcp_smoke.py               # terminal 2 — real MCP client SDK
-pytest tests/test_mcp_resource_server.py  # 10 tests, in-process, no network
+uvicorn aguard.main:app --port 8080           # terminal 1 — authorization server
+uvicorn aguard.mcp.service:app --port 8081    # terminal 2 — resource server
+python scripts/mcp_smoke.py                   # terminal 3 — real MCP client SDK
+pytest tests/test_mcp_resource_server.py      # includes the split-boundary tests
 ```
 
 ## See it work from the command line
@@ -293,7 +317,7 @@ from fastapi import Depends, FastAPI, Request
 from aguard.resource_server import ResourceServerGuard
 
 guard = ResourceServerGuard(
-    issuer="http://localhost:8000",        # the AS — ours, or anyone's
+    issuer="http://localhost:8080",        # the AS — ours, or anyone's
     audience="http://localhost:9000/mcp",  # THIS resource, and nothing else
 )
 
@@ -320,14 +344,19 @@ agctl --help                    # console script (see docs/RELEASING.md)
 
 ## Status
 
-Alpha. 260 tests green (unit + live-server smoke). Known limitations are
+Alpha. 278 tests green (unit + live-server smoke). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — authorization state defaults to
 in-memory (set `STORE_BACKEND=postgres` before running more than one worker),
 rate-limit counters default to per-process as well (set
-`RATE_LIMIT_BACKEND=postgres` to share them across workers), and the MCP
-resource server runs in-process with the AS (split into a separate service
-before any
-real deployment).
+`RATE_LIMIT_BACKEND=postgres` to share them across workers), and the signing key
+defaults to a file on disk (`KEY_SOURCE=env`, `aws-kms`, `gcp-kms` or `vault`
+for anything shared).
+
+The MCP resource server is its **own service on its own port** and holds **no
+signing key** — it verifies tokens against the AS's JWKS. The hand-rolled OIDC
+crypto has a review package written for an external reviewer in
+[docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md), with an internal self-review in
+[docs/CRYPTO_REVIEW_FINDINGS.md](docs/CRYPTO_REVIEW_FINDINGS.md).
 
 ## Roadmap
 
@@ -339,11 +368,13 @@ real deployment).
 - **Downstream guard** ✅ — protect any MCP server in ~10 lines (`examples/protect_mcp_server.py`)
 - **Persistent authorization state** ✅ — pluggable stores; `STORE_BACKEND=postgres` makes code tombstones and refresh-family revocation survive restarts and span workers
 - **Rate limiting + readiness** ✅ — `/token`, `/login` and `/register` are limited per address (plus per account for login); `GET /readyz` verifies the database and keystore, while `/healthz` stays dependency-free liveness
+- **Split resource server** ✅ — the MCP server is its own service (`aguard/mcp/service.py`) on its own port, verifying via the AS's JWKS and holding no signing key
+- **Signing keys via env / KMS** ✅ — `KEY_SOURCE=file|env|aws-kms|gcp-kms|vault`, one `Signer` interface; the KMS private key never enters the process
+- **One-command install** ✅ — `docker compose up` starts the database, the AS and the resource server
+- **External crypto review** ⏳ — reviewer package + internal findings ship; the third-party review is the remaining step before 1.0
 - Restyle the auth pages (Jinja2 + design tokens) — see [docs/DESIGN.md](docs/DESIGN.md) → E1
 - Move users/clients out of Python constants into Postgres → E2
 - Index `agent_audit`; add `org_id` → E3
-- Split the resource server into its own deployable service (own port, own container)
-- `docker compose up` one-command install
 
 A browser dashboard was considered and **cancelled** — it is a new privileged
 surface spanning tenants, i.e. the one screen that could undermine the

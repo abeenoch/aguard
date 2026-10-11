@@ -13,10 +13,11 @@ from fastapi.testclient import TestClient
 from aguard.main import app
 from aguard.oidc.pkce import challenge_s256, generate_verifier
 from aguard.oidc.validation import verify_access_token
+from aguard.settings import settings
 
 client = TestClient(app)
 
-REGISTERED_REDIRECT = "http://localhost:8000/demo/callback"
+REGISTERED_REDIRECT = f"{settings.issuer}/demo/callback"
 
 
 def _basic(client_id: str, secret: str) -> dict:
@@ -163,7 +164,7 @@ def test_code_with_mismatched_redirect_uri_rejected():
     resp = _exchange({
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": "http://localhost:8000/demo/callback-evil",
+        "redirect_uri": REGISTERED_REDIRECT + "-evil",
         "code_verifier": verifier,
         "client_id": "demo-spa",
     })

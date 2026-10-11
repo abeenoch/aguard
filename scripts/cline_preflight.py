@@ -12,22 +12,44 @@ This script replays Cline's request sequence against a RUNNING server and
 prints PASS/FAIL per gate with the exact server error, so you know what to fix
 before recording.
 
-Run the server first:  uvicorn aguard.main:app --port 8000
+Run BOTH services first:
+    uvicorn aguard.main:app --port 8080            # authorization server
+    uvicorn aguard.mcp.service:app --port 8081     # resource server (RFC 9728)
 Then:                  python scripts/cline_preflight.py
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import secrets
 import sys
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 
-BASE = "http://localhost:8000"
-MCP_RESOURCE = f"{BASE}/mcp"
+from aguard.settings import settings
+
+
+def _loopback(url: str) -> str:
+    """Same URL with the host forced to 127.0.0.1 (see smoke.py)."""
+    p = urlsplit(url)
+    host = f"127.0.0.1:{p.port}" if p.port else "127.0.0.1"
+    return urlunsplit((p.scheme, host, p.path, p.query, p.fragment))
+
+
+# IDENTITY from settings/.env; CONNECT addresses default to loopback.
+BASE = os.environ.get("AGUARD_BASE", _loopback(settings.issuer)).rstrip("/")
+MCP_RESOURCE = settings.mcp_resource_id                       # identity (aud)
+MCP_CONNECT = os.environ.get("MCP_CONNECT_URL",
+                             _loopback(MCP_RESOURCE)).rstrip("/")
 CLINE_REDIRECT = "vscode://saoudrizwan.claude-dev/mcp-auth/callback/3f9a2c"
-DEMO_REDIRECT = f"{BASE}/demo/callback"
+DEMO_REDIRECT = f"{settings.issuer}/demo/callback"
+
+# RFC 9728 §3.1: metadata lives on the RESOURCE origin, before the resource path.
+_p = urlparse(MCP_CONNECT)
+MCP_PRM_URL = (f"{_p.scheme}://{_p.netloc}"
+               f"/.well-known/oauth-protected-resource{_p.path}")
 
 _results: list[tuple[bool, str, str]] = []
 
@@ -81,9 +103,10 @@ def run() -> int:
         gate(up, "server reachable", f"{BASE}/healthz")
 
         # ---- Gate 1: discovery ------------------------------------------
-        prm = http.get(f"{BASE}/.well-known/oauth-protected-resource/mcp")
+        prm = http.get(MCP_PRM_URL)
         ok = prm.status_code == 200 and prm.json().get("resource") == MCP_RESOURCE
-        gate(ok, "RFC 9728 protected-resource metadata", str(prm.json()))
+        gate(ok, f"RFC 9728 protected-resource metadata at {MCP_PRM_URL}",
+             str(prm.json()))
         asm = http.get(f"{BASE}/.well-known/oauth-authorization-server")
         gate(asm.status_code == 200 and "registration_endpoint" in asm.json(),
              "RFC 8414 metadata advertises registration_endpoint",
@@ -194,8 +217,8 @@ def _full_flow(http: httpx.Client, client_id: str, redirect: str) -> bool:
         print(f"        token failed: {tok.status_code} {tok.text[:200]}")
         return False
     token = tok.json()["access_token"]
-    rpc = http.post(f"{BASE}/mcp", json={"jsonrpc": "2.0", "id": 1,
-                                         "method": "tools/list"},
+    rpc = http.post(MCP_CONNECT, json={"jsonrpc": "2.0", "id": 1,
+                                       "method": "tools/list"},
                     headers={"Accept": "application/json, text/event-stream",
                              "Authorization": f"Bearer {token}"})
     return rpc.status_code == 200

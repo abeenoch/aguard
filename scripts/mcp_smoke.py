@@ -9,7 +9,9 @@ This is the end-to-end proof, using the same client library MCP hosts
   4. human delete     -> allowed for its OWN row
   5. audience binding -> a token minted for /api is rejected at /mcp
 
-Run the server first:  uvicorn aguard.main:app --port 8000
+Run BOTH services first:
+    uvicorn aguard.main:app --port 8080            # authorization server
+    uvicorn aguard.mcp.service:app --port 8081     # resource server (this one)
 Then:                  python scripts/mcp_smoke.py
 """
 from __future__ import annotations
@@ -18,19 +20,34 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import secrets
 import sys
 from contextlib import asynccontextmanager
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-BASE = "http://localhost:8000"          # MUST match settings.issuer
-MCP_URL = f"{BASE}/mcp"
-REDIRECT = f"{BASE}/demo/callback"
-RESOURCE_ID = f"{BASE}/mcp"
+from aguard.settings import settings
+
+
+def _loopback(url: str) -> str:
+    """Same URL with the host forced to 127.0.0.1 (see smoke.py)."""
+    p = urlsplit(url)
+    host = f"127.0.0.1:{p.port}" if p.port else "127.0.0.1"
+    return urlunsplit((p.scheme, host, p.path, p.query, p.fragment))
+
+
+# IDENTITY (what a token's `aud` must be) comes from settings/.env; CONNECT
+# addresses default to loopback so this works on a host that cannot reach its
+# own public issuer. Override with AGUARD_BASE / MCP_CONNECT_URL.
+BASE = os.environ.get("AGUARD_BASE", _loopback(settings.issuer)).rstrip("/")
+MCP_URL = os.environ.get("MCP_CONNECT_URL",
+                         _loopback(settings.mcp_resource_id)).rstrip("/")
+REDIRECT = f"{settings.issuer}/demo/callback"
+RESOURCE_ID = settings.mcp_resource_id
 RPC_ACCEPT = {"Accept": "application/json, text/event-stream"}
 
 

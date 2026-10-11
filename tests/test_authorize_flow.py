@@ -15,10 +15,13 @@ from fastapi.testclient import TestClient
 from aguard.main import app
 from aguard.oidc.codes import CodeReplayError
 from aguard.oidc.pkce import challenge_s256, generate_verifier
+from aguard.settings import settings
 
 client = TestClient(app)
 
-REGISTERED_REDIRECT = "http://localhost:8000/demo/callback"
+# The demo callback is the issuer's own /demo/callback (clients.DEMO_REDIRECT),
+# so it tracks OIDC_ISSUER instead of hardcoding a port.
+REGISTERED_REDIRECT = f"{settings.issuer}/demo/callback"
 
 
 def _login(email: str = "alice@example.com", password: str = "correct-horse-battery") -> None:
@@ -63,7 +66,7 @@ def test_redirect_uri_must_match_exactly():
         "http://evil.example/steal",
         REGISTERED_REDIRECT + "/../evil",
         REGISTERED_REDIRECT + "x",
-        "https://localhost:8000/demo/callback",   # scheme differs
+        REGISTERED_REDIRECT.replace("http://", "https://"),   # scheme differs
         REGISTERED_REDIRECT + "/",                 # trailing slash differs
         "//evil.example/steal",                    # protocol-relative
     ):

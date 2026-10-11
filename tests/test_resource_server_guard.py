@@ -123,6 +123,15 @@ def test_missing_bearer_is_401_with_discovery(guard):
     assert "/.well-known/oauth-protected-resource" in err.headers["WWW-Authenticate"]
 
 
+def test_metadata_url_points_at_the_resource_not_the_as(guard):
+    """RFC 9728 §3.1: the pointer names THIS resource's well-known document
+    (derived from the audience), which then names the AS — not the AS's own
+    URL. The AS does not serve protected-resource metadata in the split."""
+    assert guard.resource_metadata_url == (
+        "http://localhost:9000/.well-known/oauth-protected-resource/mcp")
+    assert guard.issuer not in guard.resource_metadata_url
+
+
 def test_bad_token_is_401_detail_does_not_leak_internals(guard):
     """A 401 is read by an unauthenticated caller, so the failure REASON
     (audience mismatch, unknown kid, JWKS unreachable) must not appear in it —
@@ -174,3 +183,15 @@ def test_example_protects_its_mcp_endpoint():
     called = client.post("/mcp", json={"jsonrpc": "2.0", "id": 2,
                                        "method": "tools/call"}, headers=headers)
     assert "sub=usr_alice" in called.json()["result"]["content"][0]["text"]
+
+
+def test_example_serves_its_own_protected_resource_metadata():
+    """The URL the guard advertises must resolve ON THE RESOURCE and name the
+    AS. Otherwise MCP discovery dead-ends (which is exactly what happens if you
+    point at the AS's metadata after the split)."""
+    module = _load_example()
+    client = TestClient(module.app)
+    doc = client.get("/.well-known/oauth-protected-resource/mcp").json()
+    assert doc["resource"] == MY_RESOURCE
+    assert doc["authorization_servers"] == [ISSUER]
+    assert "header" in doc["bearer_methods_supported"]

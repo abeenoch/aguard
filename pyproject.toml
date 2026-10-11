@@ -34,6 +34,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "httpx", "build", "twine", "ruff", "mypy", "pip-audit"]
+# KMS signing backends are OPT-IN extras: the base install stays dependency-light
+# and imports these SDKs lazily, only when KEY_SOURCE selects them. Vault uses
+# the standard library's HTTP client and needs no extra.
+kms-aws = ["boto3>=1.34"]
+kms-gcp = ["google-cloud-kms>=2.21"]
 
 [project.scripts]
 agctl = "aguard.cli:main"

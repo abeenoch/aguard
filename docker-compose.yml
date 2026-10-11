@@ -1,6 +1,8 @@
-# A-guard — one-command local stack
+# A-guard — one-command local stack, SPLIT into two services
 #   docker compose up
-# App: http://localhost:8000  ·  smoke test: python scripts/smoke.py
+#   Authorization server : http://localhost:8080
+#   MCP resource server  : http://localhost:8081
+#   smoke: python scripts/smoke.py && python scripts/mcp_smoke.py
 name: a-guard
 
 services:
@@ -24,23 +26,55 @@ services:
       timeout: 3s
       retries: 15
 
-  app:
+  # ---- Authorization server: mints tokens, owns the signing key -------------
+  as:
     build: .
     ports:
-      - "8000:8000"
+      - "8080:8080"
     environment:
-      OIDC_ISSUER: http://localhost:8000
+      # Public issuer = the URL clients use (the host mapping above).
+      OIDC_ISSUER: http://localhost:8080
+      MCP_RESOURCE_URL: http://localhost:8081
+      MCP_RESOURCE_ID: http://localhost:8081/mcp
       DB_DSN_HUMAN: postgresql://app_login_human:human-pool-secret-dev@db:5432/agent_auth
       DB_DSN_AGENT: postgresql://app_login_agent:agent-pool-secret-dev@db:5432/agent_auth
       DB_DSN_AUTH: postgresql://app_login_auth:auth-pool-secret-dev@db:5432/agent_auth
       # Shared authorization state: tombstones and refresh-family revocation
       # must survive a restart, and be visible to every process.
       STORE_BACKEND: postgres
+      # Shared counters: the AS is the only limiter, but a restart must not
+      # reset an attacker's budget.
+      RATE_LIMIT_BACKEND: postgres
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
       LOG_HASH_PEPPER: ${LOG_HASH_PEPPER:-dev-only-pepper-change-me}
     depends_on:
       db:
         condition: service_healthy
+
+  # ---- MCP resource server: verifies tokens, holds NO signing key -----------
+  mcp:
+    build: .
+    # Same image, different entrypoint: a resource-server compromise is not an
+    # AS compromise.
+    command: ["uvicorn", "aguard.mcp.service:app", "--host", "0.0.0.0", "--port", "8081"]
+    ports:
+      - "8081:8081"
+    environment:
+      # `iss` stays the PUBLIC issuer, so tokens verify. JWKS_URI is the
+      # internal address this container fetches keys from — inside the compose
+      # network, "localhost:8080" is this container, not the AS.
+      OIDC_ISSUER: http://localhost:8080
+      MCP_RESOURCE_URL: http://localhost:8081
+      MCP_RESOURCE_ID: http://localhost:8081/mcp
+      JWKS_URI: http://as:8080/jwks
+      DB_DSN_HUMAN: postgresql://app_login_human:human-pool-secret-dev@db:5432/agent_auth
+      DB_DSN_AGENT: postgresql://app_login_agent:agent-pool-secret-dev@db:5432/agent_auth
+      LOG_HASH_PEPPER: ${LOG_HASH_PEPPER:-dev-only-pepper-change-me}
+    depends_on:
+      db:
+        condition: service_healthy
+      as:
+        condition: service_started
 
 volumes:
   pgdata:

@@ -6,13 +6,13 @@ the guard fetches the issuer's JWKS and checks the audience.
 
 1) Start the authorization server:
 
-       python -m uvicorn aguard.main:app --port 8000
+       python -m uvicorn aguard.main:app --port 8080
 
 2) Tell it this resource exists (the AS validates `resource` against an
    exact-match allowlist, so an unknown audience is refused):
 
        # in .env
-       ALLOWED_RESOURCES=http://localhost:8000/mcp,http://localhost:8000/api,http://localhost:9000/mcp
+       ALLOWED_RESOURCES=http://localhost:8081/mcp,http://localhost:8080/api,http://localhost:9000/mcp
 
 3) Run this server:
 
@@ -33,13 +33,19 @@ discovers the authorization server without being configured with it.
 """
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from aguard.resource_server import ResourceServerGuard
 
-ISSUER = "http://localhost:8000"
-THIS_RESOURCE = "http://localhost:9000/mcp"
+# Read the issuer from the environment so this example tracks the AS it is
+# pointed at (OIDC_ISSUER, loaded from .env by aguard.settings) instead of
+# hardcoding a port that the operator may have moved.
+ISSUER = os.environ.get("OIDC_ISSUER", "http://localhost:8080").rstrip("/")
+THIS_RESOURCE = os.environ.get("MCP_EXAMPLE_RESOURCE",
+                               "http://localhost:9000/mcp")
 
 guard = ResourceServerGuard(issuer=ISSUER, audience=THIS_RESOURCE)
 
@@ -78,6 +84,22 @@ async def mcp(request: Request,
              "error": {"code": -32601, "message": f"unsupported method {method!r}"}},
             status_code=200)
     return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": result})
+
+
+@app.get("/.well-known/oauth-protected-resource")
+@app.get("/.well-known/oauth-protected-resource/mcp")
+def protected_resource_metadata() -> dict:
+    """RFC 9728: THIS resource's metadata, naming the authorization server.
+
+    This is the document the guard's 401 points at (the URL is derived from the
+    audience with the well-known segment inserted before the resource path). It
+    lives on the RESOURCE, not the AS — that is what lets an MCP client discover
+    which AS issues tokens for this server without being configured with one."""
+    return {
+        "resource": THIS_RESOURCE,
+        "authorization_servers": [ISSUER],
+        "bearer_methods_supported": ["header"],
+    }
 
 
 @app.get("/healthz")

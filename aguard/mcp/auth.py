@@ -15,28 +15,66 @@ A token minted for /api dies twice before touching a tool.
 """
 from __future__ import annotations
 
+import logging
+
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from aguard.mcp.principal import Principal
 from aguard.oidc.claims import roles_from_claims
-from aguard.oidc.keys import KeyManager
-from aguard.oidc.validation import TokenValidationError, verify_access_token
+from aguard.oidc.validation import (
+    KeySet,
+    UnknownKeyError,
+    verify_access_token,
+)
 from aguard.settings import settings
+
+logger = logging.getLogger("a-guard.mcp.auth")
 
 
 class AGuardTokenVerifier(TokenVerifier):
-    def __init__(self, keys: KeyManager | None = None):
+    """Verify a-guard access tokens against a key set.
+
+    The key set is either the AS's own ``KeyManager`` (in-process/tests) or a
+    ``RemoteKeyStore`` (the split deployment). This verifier is identical on
+    both sides — the resource server simply has no way to SIGN, only to verify
+    against public keys it fetched.
+    """
+
+    def __init__(self, keys: KeySet | None = None):
         self._keys = keys
+
+    def _verify(self, token: str) -> dict:
+        return verify_access_token(token, keys=self._keys,  # type: ignore[arg-type]
+                                   audience=settings.mcp_resource_id)
 
     async def verify_token(self, token: str) -> AccessToken | None:
         keys = self._keys
         if keys is None or not token:
             return None
         try:
-            claims = verify_access_token(token, keys=keys,
-                                         audience=settings.mcp_resource_id)
-        except TokenValidationError:
+            claims = self._verify(token)
+        except UnknownKeyError:
+            # A key rotation we have not seen yet. Refresh ONCE and retry —
+            # only this failure triggers a fetch (see UnknownKeyError), so a
+            # forged/expired token cannot make us hammer the JWKS endpoint.
+            refresh = getattr(keys, "refresh", None)
+            if refresh is None:
+                return None
+            try:
+                refresh()
+            except Exception:  # JWKS down: fail closed below
+                return None
+            try:
+                claims = self._verify(token)
+            except Exception:  # refresh did not help: fail closed
+                return None
+        except Exception as exc:
+            # Includes TokenValidationError AND a key source that cannot answer
+            # (cold RemoteKeyStore with the JWKS unreachable). verify_token must
+            # never raise into the SDK: an unverifiable token is simply not
+            # authenticated, so fail closed and log the reason (never the token).
+            logger.debug("token verification failed: %s", exc)
             return None
         roles = roles_from_claims(claims)
         return AccessToken(

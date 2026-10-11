@@ -45,10 +45,11 @@ mitigation is PKCE S256, which `/authorize` already requires of every client.
 A forbidden-scheme denylist (`javascript:`, `data:`, `file:`, …) is applied
 even when a scheme is allowlisted.
 
-## 3. Start the server
+## 3. Start the two services
 
 ```bash
-uvicorn aguard.main:app --port 8000
+uvicorn aguard.main:app --port 8080            # authorization server
+uvicorn aguard.mcp.service:app --port 8081     # MCP resource server
 ```
 
 ## 4. Preflight — do not record until this is 9/9
@@ -78,7 +79,7 @@ PKCE S256 are *required* and correctly rejected when absent), and a full
   "mcpServers": {
     "a-guard-documents": {
       "type": "streamableHttp",
-      "url": "http://localhost:8000/mcp",
+      "url": "http://localhost:8081/mcp",
       "disabled": false,
       "autoApprove": []
     }

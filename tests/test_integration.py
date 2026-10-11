@@ -23,10 +23,11 @@ from fastapi.testclient import TestClient
 
 from aguard.db.session import close_pools
 from aguard.oidc.pkce import challenge_s256, generate_verifier
+from aguard.settings import settings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = PROJECT_ROOT / "aguard" / "db" / "schema.sql"
-REDIRECT = "http://localhost:8000/demo/callback"
+REDIRECT = f"{settings.issuer}/demo/callback"
 
 
 def _apply_schema() -> None:

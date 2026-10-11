@@ -1,12 +1,15 @@
-"""Standards metadata: RFC 8414 (AS), OIDC discovery, RFC 9728 (resource).
+"""Authorization-server metadata: RFC 8414 + OIDC discovery.
 
 One source of truth — the OIDC discovery doc and the RFC 8414 doc are the
 same document at two paths because different clients look in different
 places (OIDC clients → openid-configuration, MCP clients → RFC 8414 path).
 
-RFC 9728 protected-resource metadata is the MCP discovery lighthouse: an
-MCP client hitting our resource server asks /.well-known/oauth-protected-resource
-and learns which authorization server to use.
+RFC 9728 protected-resource metadata is NOT served here. It belongs to the
+resource server by definition (it describes THAT resource and names the ASs
+that may issue for it), so it lives with the MCP service — see
+aguard/mcp/service.py, where the MCP SDK derives it from resource_server_url.
+Keeping it off the AS prevents an AS/RS split from advertising the AS as its
+own resource.
 """
 from __future__ import annotations
 
@@ -70,20 +73,3 @@ def openid_configuration() -> dict:
 def oauth_authorization_server_metadata() -> dict:
     """RFC 8414 — where MCP clients look per the MCP authorization spec."""
     return authorization_server_metadata()
-
-
-@router.get("/.well-known/oauth-protected-resource")
-@router.get("/.well-known/oauth-protected-resource/mcp")
-def protected_resource_metadata() -> dict:
-    """RFC 9728 — tells an MCP client which AS issues tokens for this server.
-
-    `resource` echoes the identifier clients must pass as the RFC 8707
-    `resource` parameter (and which lands in the token's `aud`)."""
-    issuer = settings.issuer
-    return {
-        "resource": settings.mcp_resource_id,
-        "authorization_servers": [issuer],
-        "bearer_methods_supported": ["header"],
-        "scopes_supported": ["openid", "email", "orders:read"],
-        "resource_name": "A-guard demo MCP resource",
-    }

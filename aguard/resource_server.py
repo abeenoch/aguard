@@ -16,12 +16,18 @@ Four checks, all enforced here:
 The 401 carries `WWW-Authenticate: Bearer resource_metadata="..."` so an MCP
 client can *discover* the authorization server instead of being configured with
 it. That is the MCP spec's discovery path, and it costs one header.
+
+That header points at THIS resource's own RFC 9728 document
+(`/.well-known/oauth-protected-resource…`, derived from the audience), which
+names the AS. Serve it yourself (it is a few lines — see
+examples/protect_mcp_server.py) so discovery resolves.
 """
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 import jwt as pyjwt
 from fastapi import HTTPException, Request
@@ -30,6 +36,20 @@ log = logging.getLogger("a-guard.resource-server")
 
 DEFAULT_LEEWAY = 60
 _ALGORITHM = "RS256"
+
+
+def _resource_metadata_url(resource: str) -> str:
+    """RFC 9728 §3.1: insert the well-known segment before the resource path.
+
+    For a resource identifier ``https://host/mcp`` this yields
+    ``https://host/.well-known/oauth-protected-resource/mcp`` — the RESOURCE's
+    own metadata, which in turn names the AS. (It is not the AS's document: RFC
+    9728 puts this endpoint on the resource server.)
+    """
+    parsed = urlparse(resource)
+    path = parsed.path if parsed.path not in ("", "/") else ""
+    return (f"{parsed.scheme}://{parsed.netloc}"
+            f"/.well-known/oauth-protected-resource{path}")
 
 
 class TokenError(Exception):
@@ -42,7 +62,7 @@ class ResourceServerGuard:
     Example (the whole integration):
 
         guard = ResourceServerGuard(
-            issuer="http://localhost:8000",
+            issuer="http://localhost:8080",
             audience="http://localhost:9000/mcp",
         )
 
@@ -60,6 +80,7 @@ class ResourceServerGuard:
         leeway: int = DEFAULT_LEEWAY,
         required_scopes: tuple[str, ...] = (),
         jwk_client: Any | None = None,
+        resource_metadata_url: str | None = None,
     ) -> None:
         self.issuer = issuer.rstrip("/")
         self.audience = audience
@@ -67,9 +88,12 @@ class ResourceServerGuard:
         self.required_scopes = required_scopes
         self._jwk_client = jwk_client or pyjwt.PyJWKClient(
             jwks_uri or f"{self.issuer}/jwks")
-        # Where an unauthenticated MCP client should look for the AS.
+        # Where an unauthenticated MCP client finds the protected-resource
+        # metadata. Default: THIS resource's own RFC 9728 URL (derived from the
+        # audience). Override it if the resource is published under a different
+        # public origin than its audience identifier.
         self.resource_metadata_url = (
-            f"{self.issuer}/.well-known/oauth-protected-resource")
+            resource_metadata_url or _resource_metadata_url(audience))
 
     def verify(self, token: str) -> dict:
         """Return validated claims, or raise TokenError."""

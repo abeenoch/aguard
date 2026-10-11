@@ -10,6 +10,7 @@ is the secret leak — that is why this file must stay credential-free.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,9 +44,34 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+_PEM_BLOCK = re.compile(
+    r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----", re.DOTALL)
+
+
+def _pem_blocks(text: str) -> tuple[str, ...]:
+    """Extract every PEM block from a blob.
+
+    Env vars cannot hold a list, so ``SIGNING_KEY_RETIRED_PEMS`` is one blob
+    that may contain several PEMs (newline-separated, or %-encoded). Matching
+    the BEGIN/END markers is robust to whatever whitespace survives the trip
+    through a shell or a secret manager, which matters because a mis-split PEM
+    is a signing outage.
+    """
+    return tuple(m.group(0) for m in _PEM_BLOCK.finditer(text or ""))
+
+
 # Issuer used to derive resource identifiers (RFC 8707) before Settings exists.
-_ISSUER = _env("OIDC_ISSUER", "http://localhost:8000").rstrip("/")
-_MCP_RESOURCE_ID = _env("MCP_RESOURCE_ID", f"{_ISSUER}/mcp").rstrip("/")
+# 8080 is the dev default because 8000 is a de-facto busy port (and on the
+# maintainer's host it is taken).
+_ISSUER = _env("OIDC_ISSUER", "http://localhost:8080").rstrip("/")
+
+# The MCP resource server is its own deployable service on its own port, so its
+# identifier no longer shares the issuer's origin. MCP_RESOURCE_URL is the
+# origin it listens on (used for docs/health), and MCP_RESOURCE_ID is the exact
+# RFC 8707 `resource` value a token must carry as its `aud` to be accepted
+# there. Both stay independently overridable.
+_MCP_BASE = _env("MCP_RESOURCE_URL", "http://localhost:8081").rstrip("/")
+_MCP_RESOURCE_ID = _env("MCP_RESOURCE_ID", f"{_MCP_BASE}/mcp").rstrip("/")
 
 
 @dataclass(frozen=True)
@@ -53,6 +79,56 @@ class Settings:
     # Public issuer URL — the `iss` claim. Exact string match matters later:
     # validators compare this byte-for-byte, so no trailing-slash drift.
     issuer: str = _ISSUER
+
+    # Origin the MCP resource server listens on. This service verifies tokens
+    # with the ISSUER's JWKS (it holds no signing key), so the two origins
+    # differ in the split deployment.
+    mcp_resource_url: str = _MCP_BASE
+
+    # Where a split resource server fetches the issuer's JWKS. Empty (the
+    # default) means "{issuer}/jwks", correct when both services share a host.
+    # Behind a container network the issuer is the BROWSER-facing URL, which may
+    # not resolve from inside another container — set JWKS_URI to the internal
+    # address (e.g. http://as:8080/jwks) so rotation is still picked up while the
+    # token's `iss` stays the public issuer.
+    jwks_uri: str = _env("JWKS_URI", "").rstrip("/")
+
+    # MCP transport DNS-rebinding protection. The SDK always allows loopback;
+    # when the resource server is reached by hostname/IP from off-box, the
+    # public host MUST be listed here or every request is rejected (421
+    # Misdirected Request). Comma-separated, wildcard-port form supported:
+    #   MCP_ALLOWED_HOSTS=203.0.113.10:*,mcp.example.com:*
+    #   MCP_ALLOWED_ORIGINS=http://203.0.113.10:*
+    mcp_allowed_hosts: tuple[str, ...] = tuple(
+        h.strip() for h in _env("MCP_ALLOWED_HOSTS", "").split(",") if h.strip())
+    mcp_allowed_origins: tuple[str, ...] = tuple(
+        o.strip() for o in _env("MCP_ALLOWED_ORIGINS", "").split(",")
+        if o.strip())
+
+    # --- Signing key source (aguard/oidc/signers.py) -----------------------
+    # file    : generate/persist an unencrypted keystore under KEY_DIR (default)
+    # env     : take PEM(s) from the environment; never written to disk
+    # aws-kms | gcp-kms | vault : sign in the KMS/HSM; the private key never
+    #                             exists in this process
+    key_source: str = _env("KEY_SOURCE", "file").strip().lower()
+
+    # Active signing key PEM for KEY_SOURCE=env (PKCS#8 private key). Kept as
+    # one secret per env var so a secret manager injects it without a file.
+    signing_key_pem: str = _env("SIGNING_KEY_PEM", "")
+
+    # Retired keys kept for the rotation-overlap window: any tokens they signed
+    # must still verify. Either private or public PEMs are accepted (a public
+    # PEM is enough to verify and is the safer thing to hand around).
+    signing_key_retired_pems: tuple[str, ...] = _pem_blocks(
+        _env("SIGNING_KEY_RETIRED_PEMS", ""))
+
+    # KMS/HSM coordinates. For Vault, kms_key_id is the transit key NAME and the
+    # address/token fall back to the standard VAULT_ADDR / VAULT_TOKEN env vars.
+    kms_key_id: str = _env("KMS_KEY_ID", "")
+    kms_region: str = _env("KMS_REGION", "")
+    vault_addr: str = _env("VAULT_ADDR", "").rstrip("/")
+    vault_token: str = _env("VAULT_TOKEN", "")
+    vault_namespace: str = _env("VAULT_NAMESPACE", "")
 
     # Where the RSA keystore (keys.json) lives.
     key_dir: Path = Path(_env("KEY_DIR", str(PROJECT_ROOT / "data" / "keys")))

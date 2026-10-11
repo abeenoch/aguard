@@ -12,15 +12,34 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import secrets
 import sys
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 import httpx
 
-BASE = "http://localhost:8000"   # MUST match settings.issuer byte-for-byte
+from aguard.settings import settings
 
-REDIRECT = "http://localhost:8000/demo/callback"
+
+def _loopback(url: str) -> str:
+    """Same URL with the host forced to 127.0.0.1.
+
+    The issuer may be a public address this host cannot hairpin to, while the
+    service is always reachable on loopback. IDENTITY (iss/redirect) still comes
+    from settings — only the CONNECT address is rewritten."""
+    p = urlsplit(url)
+    host = f"127.0.0.1:{p.port}" if p.port else "127.0.0.1"
+    return urlunsplit((p.scheme, host, p.path, p.query, p.fragment))
+
+
+ISSUER = settings.issuer
+# HTTP base: loopback by default; override with AGUARD_BASE for a remote host.
+BASE = os.environ.get("AGUARD_BASE", _loopback(ISSUER)).rstrip("/")
+
+# The redirect must equal the client's REGISTERED uri (derived from the issuer),
+# so it follows ISSUER, not the connect address.
+REDIRECT = f"{ISSUER}/demo/callback"
 PII_TITLE = "callback alice@example.com re card 4111111111111111"
 
 
@@ -83,7 +102,7 @@ def main() -> None:
     # 1. discovery + JWKS over the wire
     d = c.get(f"{BASE}/.well-known/openid-configuration")
     say("discovery 200 + issuer correct",
-        d.status_code == 200 and d.json()["issuer"] == BASE)
+        d.status_code == 200 and d.json()["issuer"] == ISSUER)
     j = c.get(f"{BASE}/jwks")
     say("JWKS public-only",
         j.status_code == 200

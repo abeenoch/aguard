@@ -26,7 +26,15 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from aguard.settings import settings
+
 log = logging.getLogger("a-guard.clients")
+
+#: Single source of truth for the demo callback. It is the AS issuer's own
+#: /demo/callback, so it moves with the issuer (OIDC_ISSUER) rather than being
+#: hardcoded — otherwise changing the AS port silently breaks every seeded
+#: client's registered redirect and the whole test suite with it.
+DEMO_REDIRECT = f"{settings.issuer}/demo/callback"
 
 #: Ceiling on dynamically-registered clients (those created at runtime via
 #: Dynamic Client Registration). Seeded clients are permanent and exempt.
@@ -159,7 +167,7 @@ def seed_registry() -> ClientRegistry:
     registry.seed(Client(
         client_id="demo-spa",
         client_secret_hash=None,
-        redirect_uris=("http://localhost:8000/demo/callback",),
+        redirect_uris=(DEMO_REDIRECT,),
         allowed_scopes=frozenset({
             "openid", "profile", "email", "orders:read", "orders:write",
         }),
@@ -171,7 +179,7 @@ def seed_registry() -> ClientRegistry:
     registry.seed(Client(
         client_id="demo-conf",
         client_secret_hash=hash_secret(os.environ.get("DEMO_CONF_SECRET", "demo-conf-secret")),
-        redirect_uris=("http://localhost:8000/demo/callback",),
+        redirect_uris=(DEMO_REDIRECT,),
         allowed_scopes=frozenset({
             "openid", "profile", "email", "orders:read", "orders:write",
             "agents:read",
@@ -200,7 +208,7 @@ def seed_registry() -> ClientRegistry:
     registry.seed(Client(
         client_id="chat-agent",
         client_secret_hash=hash_secret(os.environ.get("CHAT_AGENT_SECRET", "chat-agent-secret")),
-        redirect_uris=("http://localhost:8000/demo/callback",),
+        redirect_uris=(DEMO_REDIRECT,),
         allowed_scopes=frozenset({
             "openid", "email", "orders:read",   # deliberately no orders:write
         }),
