@@ -400,6 +400,19 @@ def test_mcp_redact_text_audit_row_holds_counts_not_content(env):
         assert fragment not in statement
 
 
+def test_mcp_redact_text_masks_address_from_chat(env):
+    """The live finding that motivated the address pattern: a free-form
+    street address passed through with 0 findings. It must now be masked."""
+    token = _agent_self_token(env)
+    chat = "my address is nos 4 oguntunde estate, deliveries only"
+    outcome = _call_tool(env, token, "redact_text", {"text": chat})
+    redacted = outcome["redacted"]
+    assert "oguntunde" not in redacted
+    assert "[ADDRESS_REDACTED]" in redacted
+    by_type = {f["type"]: f["count"] for f in outcome["findings"]}
+    assert by_type.get("address") == 1
+
+
 def test_mcp_redact_text_idempotent_output(env):
     """Running redact_text on its own output changes nothing — an agent that
     re-scans a forwarded message must not double-mask or corrupt tags."""

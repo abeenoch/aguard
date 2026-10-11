@@ -230,3 +230,49 @@ def test_scan_findings_clean_text_is_empty():
     from aguard.redact.patterns import scan_findings
     assert scan_findings("nothing to see here", PEPPER) == []
 
+
+# --------------------------- address detection -----------------------------
+
+
+def test_address_pattern_catches_real_forms():
+    from aguard.redact.patterns import redact_text, scan_findings
+    for text in ("my address is nos 4 oguntunde estate",
+                 "I live at 12 Marina Road",
+                 "flat 3b, Allen Avenue, Lagos",
+                 "Plot 14, Adeola Odeku Street",
+                 "send it to 45B/2 Unity Crescent"):
+        findings = {f["type"]: f["count"] for f in scan_findings(text, PEPPER)}
+        assert findings.get("address") == 1, text
+        assert "[ADDRESS_REDACTED]" in redact_text(text, PEPPER), text
+
+
+def test_address_pattern_leaves_prose_alone():
+    """The street-word anchor must not fire on everyday sentences."""
+    from aguard.redact.patterns import redact_text, scan_findings
+    for text in ("chapter 4 covers the road",
+                 "we drove 40 miles per hour down the drive",
+                 "there is no 4 in the list",
+                 "take exit 7 then turn around"):
+        assert scan_findings(text, PEPPER) == [], text
+        assert redact_text(text, PEPPER) == text, text
+
+
+def test_email_tag_not_nibbled_by_phone_pass():
+    """A digit-heavy email tag must survive the phone detector — the tag is
+    our own output, not PII (live finding from a card+email chat message)."""
+    from aguard.redact.patterns import redact_text
+    masked = redact_text("mail alice1234567@example.com now", PEPPER)
+    tag = masked.split()[1]
+    assert tag.startswith("email[h:") and tag.endswith("]")
+    inner = tag[len("email[h:"):-1]
+    assert "***" not in inner, "phone pass chewed the correlation tag"
+
+
+def test_scan_counts_match_actual_masking():
+    """A card's digit run must count as a card, not also as two phones."""
+    from aguard.redact.patterns import scan_findings
+    text = "card 4111 1111 1111 1111 and bob@example.com"
+    findings = {f["type"]: f["count"] for f in scan_findings(text, PEPPER)}
+    assert findings.get("card") == 1
+    assert "phone" not in findings
+

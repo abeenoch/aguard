@@ -42,10 +42,10 @@ INSTRUCTIONS = (
     "A-guard demo document server. Read tools return only the caller's own "
     "tenant rows (row-level security). Write tools exist but are refused for "
     "agent tokens by database policy — the refusal is the lesson, not a bug. "
-    "redact_text scrubs PII (cards, emails, phones, IPs, secrets) from any "
-    "text using the same engine that redacts this server's own audit trail — "
-    "use it BEFORE echoing user-provided sensitive values back or forwarding "
-    "content to another tool or provider."
+    "redact_text scrubs PII (cards, emails, phones, addresses, IPs, secrets) "
+    "from any text using the same engine that redacts this server's own audit "
+    "trail — use it BEFORE echoing user-provided sensitive values back or "
+    "forwarding content to another tool or provider."
 )
 
 
