@@ -50,6 +50,10 @@ logged but the counts.** The playground is rate-limited (10 req/min per address)
 and capped at 10,000 characters — knobs in `.env.example`
 (`RATE_LIMIT_REDACT`, `REDACT_ENDPOINT_MAX_CHARS`).
 
+<p align="center">
+  <video src="assets/aguard-demo.mp4" width="720" controls muted playsinline></video>
+</p>
+
 Prefer it inside an agent? Add the hosted tool to any MCP host — Cline runs the
 browser authorization flow on first use, no deployment on your side:
 
