@@ -94,6 +94,31 @@ Two non-obvious, load-bearing details:
 - **Keep `autoApprove` empty.** You want the refused tool call to appear in
   the conversation for the viewer to see, not to be auto-approved and hidden.
 
+## 5b. Connecting to the DEPLOYED origin (remote)
+
+The same sequence works against the public deployment; only the URL and the
+server's launch environment differ:
+
+- Point Cline at **`https://auth.example.com/mcp`** (`"type":
+  "streamableHttp"`), instead of `http://localhost:8081/mcp`.
+- The AS must accept Cline's `vscode://` redirect. Strict DCR is the default, so
+  enable the opt-in in the AS's **launch environment** — `systemd/aguard-as.service`
+  already sets `DCR_ALLOWED_REDIRECT_SCHEMES=vscode`. It is deliberately *not* in
+  `.env`, because `tests/test_dcr_redirect_policy.py` reads `.env` to pin the
+  default-strict posture; exporting it there would fail the suite.
+- `MCP_ALLOWED_HOSTS` must list the **bare** public host: the SDK's `host:*` form
+  only matches a Host that explicitly carries a port, and `https://` on 443 sends
+  the bare name (otherwise every public request is a 421 Misdirected Request).
+
+Prove it before recording — against the live origin:
+
+```bash
+AGUARD_BASE=https://auth.example.com/api \
+MCP_CONNECT_URL=https://auth.example.com/mcp \
+  python scripts/cline_preflight.py          # expect: 9/9 gates passed
+```
+
+
 ## 6. The recording beats
 
 | # | On screen | What to say |
@@ -121,10 +146,13 @@ The refusal also produces a structured log line
 
 ## 8. Known caveats
 
-- The MCP resource server runs **in the same process** as the authorization
-  server (fine for a demo; split before production — see `SECURITY.md`).
-- Auth-code / refresh / client stores are **in-memory**, so run a single
-  process (no `--workers`); Postgres holds the documents and audit trail.
+- The MCP resource server is its OWN service (`aguard/mcp/service.py`, port
+  8081) and holds **no signing key** — it verifies tokens against the issuer's
+  JWKS. See `SECURITY.md` and `docs/DESIGN.md`.
+- Authorization state (auth codes, refresh families, rate-limit counters) is
+  shared via Postgres when `STORE_BACKEND=postgres` (the deployed `.env`), so
+  more than one worker is safe; with the default `memory` backend run a single
+  process (no `--workers`).
 - If a future Cline version changes its redirect URI, re-run the preflight
   and adjust `DCR_ALLOWED_REDIRECT_SCHEMES` if the scheme changed.
 

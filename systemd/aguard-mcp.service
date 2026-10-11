@@ -1,0 +1,25 @@
+[Unit]
+Description=a-guard MCP resource server (FastAPI/uvicorn; holds no signing key)
+Documentation=https://github.com/abeenoch/aguard
+After=network.target postgresql.service aguard-as.service
+Wants=postgresql.service aguard-as.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/aguard
+# Same config source as the AS: aguard/settings.py loads WorkingDirectory/.env.
+# This service holds NO signing key — it verifies tokens against the issuer's
+# JWKS (JWKS_URI in .env), so a compromise here is not an AS compromise.
+ExecStart=/root/aguard/.venv/bin/uvicorn aguard.mcp.service:app --host 127.0.0.1 --port 8081 --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aguard-mcp
+# Binds loopback only: nginx proxies the public /mcp (and the origin-level
+# RFC 9728 protected-resource metadata) to it.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

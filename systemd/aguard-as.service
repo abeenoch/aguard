@@ -1,0 +1,31 @@
+[Unit]
+Description=a-guard authorization server (FastAPI/uvicorn)
+Documentation=https://github.com/abeenoch/aguard
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/aguard
+# Cline (an editor extension) registers a PRIVATE-USE redirect
+# (vscode://saoudrizwan.claude-dev/mcp-auth/callback/<hash>), which strict DCR
+# rejects with 400. Enable the opt-in HERE, not in .env: the suite's
+# tests/test_dcr_redirect_policy.py reads .env and pins the default-strict
+# posture ("no env var, no vscode"), so exporting it there fails the tests.
+# RFC 8252 §7.1 permits private-use schemes; PKCE S256 is the mitigation.
+Environment=DCR_ALLOWED_REDIRECT_SCHEMES=vscode
+# Issuer, DSNs, and secrets are loaded by aguard/settings.py from
+# WorkingDirectory/.env (real environment wins), so no EnvironmentFile is needed.
+ExecStart=/root/aguard/.venv/bin/uvicorn aguard.main:app --host 127.0.0.1 --port 8080 --workers 1
+Restart=always
+RestartSec=5
+# Server-side request logging goes to the journal (PII-redacted at the source).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aguard-as
+# The AS binds loopback only: nginx terminates TLS and proxies /api to it.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

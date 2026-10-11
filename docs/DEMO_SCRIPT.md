@@ -11,10 +11,16 @@ real MCP client, prints the audit trail, and shows redaction.
 
 ```bash
 cd /root/aguard
-# 1. Services must NOT be pre-running, so the demo starts them on camera with
-#    retake-friendly limits. (If they are, they get reused — that works, but the
-#    per-account login limit can bite on a second take.)
-fuser -k 8080/tcp 8081/tcp 2>/dev/null || true
+# 1. Services must NOT be pre-running, so the demo starts its OWN on camera with
+#    retake-friendly limits (the demo pins a loopback identity; a reused server
+#    keeps the deployment's identity and the loopback smoke client then fails).
+#    The deployment runs under systemd with Restart=always, so stop the UNITS —
+#    `fuser -k` alone just makes systemd respawn them.
+sudo systemctl stop aguard-as aguard-mcp     # restart after: systemctl start …
+
+#    Prefer to leave the deployment up? Record on spare ports instead:
+#      AGUARD_BASE=http://localhost:8090 MCP_RESOURCE_URL=http://localhost:8091 \
+#        bash scripts/demo.sh
 
 # 2. Database reachable + schema applied.
 .venv/bin/python scripts/agctl.py verify        # redaction self-check
@@ -81,7 +87,7 @@ capture the window; the script's own headings carry the narrative.
 |---|---|---|
 | `429` / "rate-limited" hint | per-account login ceiling on a **reused** server | stop the services, re-run so the script starts them; or `DEMO_KEEP=1` between takes |
 | readiness never turns ready | database down / schema missing | `createdb agent_auth && psql -U postgres -d agent_auth -f aguard/db/schema.sql` |
-| `Address already in use` | your own app on 8080/8081 | the demo reuses a *running* a-guard; only non-a-guard squatters block — change `AGUARD_BASE`/`MCP_RESOURCE_URL` |
+| `Address already in use` | the deployment (systemd) owns 8080/8081, or another app squats them | `sudo systemctl stop aguard-as aguard-mcp`, or point the demo at spare ports with `AGUARD_BASE`/`MCP_RESOURCE_URL` |
 | nothing on screen | running under a pipe without a TTY | colours/pauses are TTY-gated; record with asciinema or a real terminal |
 
 ## Length budget
