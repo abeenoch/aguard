@@ -14,6 +14,7 @@ validate_authorize_params ordering).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -22,16 +23,30 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from aguard.oidc.clients import Client, ClientRegistry
 from aguard.oidc.codes import AuthCodeStore
-from aguard.oidc.pages import consent_form, error_page, login_form
+from aguard.oidc.pages import consent_form, error_page, login_form, signup_form
 from aguard.oidc.session import create_session_token, parse_session_token
 from aguard.oidc.urls import public_path_prefix
-from aguard.oidc.users import USERS, find_by_email, verify_password
+from aguard.oidc.users import (
+    USERS,
+    User,
+    dummy_user,
+    find_by_email,
+    hash_password,
+    new_sub,
+    user_store,
+    verify_password,
+)
 from aguard.ratelimit import enforce_rate_limit
 from aguard.settings import settings
 
 router = APIRouter()
 
 SESSION_COOKIE = "lab_session"
+
+#: Deliberately permissive: the authority on whether an address is deliverable
+#: is the mail system, not a regex. This rejects only the obviously-malformed,
+#: so a typo cannot create an account nobody can ever sign in to.
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$")
 
 
 @dataclass(frozen=True)
@@ -265,7 +280,9 @@ def login_page(next_url: str = Query("/", alias="next")) -> HTMLResponse:
     # Same `next` naming rule as POST /login: the wire parameter is `next`,
     # the Python name is not.
     return HTMLResponse(
-        login_form(next_url=_safe_next(next_url), prefix=public_path_prefix())
+        login_form(next_url=_safe_next(next_url), prefix=public_path_prefix(),
+                   allow_signup=settings.allow_signup,
+                   demo_users=settings.seed_demo_users)
     )
 
 
@@ -296,11 +313,10 @@ def login(
     user = find_by_email(email)
     if user is None:
         # Dummy verify: keeps unknown-email timing indistinguishable from
-        # wrong-password timing, so the login form can't enumerate accounts.
-        # Any user will do; builtin next() is available because the route
-        # parameter above is named next_url.
-        from aguard.oidc.users import USERS as _all
-        verify_password(next(iter(_all.values())), password)
+        # wrong-password timing, so the form cannot enumerate accounts. A FIXED
+        # stand-in, not a walk over the directory — the directory is legitimately
+        # empty on a fresh deployment, and next(iter(...)) would then 500.
+        verify_password(dummy_user(), password)
         ok = False
     else:
         ok = verify_password(user, password)
@@ -311,7 +327,9 @@ def login(
         return HTMLResponse(
             login_form(next_url=_safe_next(next_url),
                        error="Invalid email or password.",
-                       prefix=public_path_prefix()),
+                       prefix=public_path_prefix(),
+                       allow_signup=settings.allow_signup,
+                       demo_users=settings.seed_demo_users),
             status_code=401,
         )
 
@@ -386,6 +404,83 @@ def consent(
         resource=validated.resource,   # RFC 8707: carried into the code record
     )
     return _redirect_with(redirect_uri, {"code": raw_code, "state": state})
+
+
+@router.get("/signup", response_class=HTMLResponse)
+def signup_page(next_url: str = Query("/", alias="next")) -> Response:
+    if not settings.allow_signup:
+        return HTMLResponse(
+            error_page(title="Registration closed",
+                       detail="This deployment does not accept self-service "
+                              "sign-ups."),
+            status_code=404)
+    return HTMLResponse(
+        signup_form(next_url=_safe_next(next_url), prefix=public_path_prefix()))
+
+
+@router.post("/signup", response_class=HTMLResponse)
+def signup(
+    request: Request,
+    name: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
+    next_url: str = Form("/", alias="next"),
+) -> Response:
+    """Create an account, then sign the new owner straight in.
+
+    Every rejection re-renders the form with the name/email preserved — a
+    rejected password must not cost the user the rest of what they typed. The
+    echoed values are escaped at render time like everything else.
+    """
+    prefix = public_path_prefix()
+    safe_next = _safe_next(next_url)
+
+    def reject(message: str, status: int = 400) -> HTMLResponse:
+        return HTMLResponse(
+            signup_form(next_url=safe_next, error=message, prefix=prefix,
+                        email=email.strip(), name=name.strip()),
+            status_code=status)
+
+    if not settings.allow_signup:
+        return reject(
+            "This deployment does not accept self-service sign-ups.", 404)
+
+    # Counted BEFORE any hashing: the cost of that hash is what a flood is
+    # trying to buy, so the ceiling comes first (same order as /login).
+    limited = enforce_rate_limit(request, "signup", as_html=True)
+    if limited is not None:
+        return limited
+
+    name, email = name.strip(), email.strip()
+    if not name:
+        return reject("Please enter your name.")
+    if len(name) > 120:
+        return reject("That name is too long.")
+    if not _EMAIL_RE.match(email):
+        return reject("Please enter a valid email address.")
+    if len(password) < 10:
+        return reject("Password must be at least 10 characters.")
+    if find_by_email(email) is not None:
+        return reject("An account with that email already exists.")
+
+    sub = new_sub()
+    user_store().add(User(
+        sub=sub, email=email, display_name=name,
+        password_hash=hash_password(password), amr=("pwd",)))
+
+    # Sign in immediately: the person who just created this account holds the
+    # browser that created it, so a login round-trip is pure friction.
+    resp = RedirectResponse(safe_next, 303)
+    resp.set_cookie(
+        SESSION_COOKIE,
+        create_session_token(sub),
+        httponly=True,
+        samesite="lax",
+        secure=settings.session_cookie_is_secure,
+        max_age=settings.session_ttl,
+        path="/",
+    )
+    return resp
 
 
 @router.get("/logout")

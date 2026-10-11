@@ -64,6 +64,7 @@ _WINDOW_SECONDS = {
     "login": 60,
     "login_account": 300,     # 5 min: one victim, many source addresses
     "register": 3600,         # DCR is a rare, deliberate operation
+    "signup": 3600,           # account creation, likewise
 }
 
 #: Bucket-key component for an identity we could not determine (no socket
@@ -426,6 +427,10 @@ def default_policies() -> dict[str, RateLimit]:
                                    _WINDOW_SECONDS["login_account"]),
         "register": RateLimit(settings.rate_limit_register,
                               _WINDOW_SECONDS["register"]),
+        # Account creation is the same class of operation as DCR — an anonymous
+        # caller creating a durable record — so it shares the same budget.
+        "signup": RateLimit(settings.rate_limit_register,
+                            _WINDOW_SECONDS["signup"]),
     }
 
 

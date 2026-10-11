@@ -35,6 +35,14 @@ for _name, _value in {
     # RATE_LIMIT_BACKEND=postgres must not see them fail. The shared backend is
     # covered on its own terms in tests/test_rate_limit_shared.py.
     "RATE_LIMIT_BACKEND": "memory",
+    # Pin the authorization/user stores for the suite too. test_integration and
+    # test_mcp_resource_server re-apply schema.sql per module for a deterministic
+    # start, and schema.sql DROPs every table — including `users`. A DB-backed
+    # directory would lose its seeded accounts mid-run and every later /login
+    # would 401. Memory keeps the directory process-local (with its seeded demo
+    # users), which is also the code's own default. The durable backends are
+    # covered on their own terms in tests/test_stores_persistence.py.
+    "STORE_BACKEND": "memory",
     # Pin the issuer/resource set so the suite does not depend on how a given
     # deployment is exposed. Tests describe the code's behaviour; a host serving
     # an http issuer on a public IP (fine for a demo, refused by the DCR

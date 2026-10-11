@@ -145,6 +145,22 @@ what it started. Recording? The storyboard, narration and export commands are in
 The app prints `INSECURE DEV SECRETS ACTIVE` at startup until you override
 `SESSION_SECRET` and `LOG_HASH_PEPPER` — that warning is intentional.
 
+### Anyone can sign up
+
+Accounts are not hardcoded. `/signup` creates one (name, email, password —
+PBKDF2-HMAC-SHA256, 200k iterations), signs the visitor straight in, and — with
+`STORE_BACKEND=postgres` — keeps the account across restarts. The sign-in and
+consent pages carry a "Create one" link between them.
+
+```bash
+ALLOW_SIGNUP=false      # close registration without a code change
+SEED_DEMO_USERS=false   # drop alice/bob (their passwords are public above)
+```
+
+The two seeded demo users are the RLS fixtures the suite and the demo depend on,
+which is why they exist at all — a real deployment turns them off and uses
+`/signup`.
+
 ## Deploy (systemd + a TLS reverse proxy)
 
 The files that run a-guard on a server live in this repo:

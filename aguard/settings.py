@@ -295,6 +295,19 @@ class Settings:
         ).split(",") if s.strip()
     )
 
+    # Self-service sign-up (/signup). ON by default — "anybody can use it" is
+    # the point of a public deployment — but the knob exists so a locked-down
+    # instance can close registration without a code change. The endpoint is
+    # rate-limited exactly like /register (see aguard/ratelimit.py).
+    allow_signup: bool = _env("ALLOW_SIGNUP", "true").strip().lower() in (
+        "1", "true", "yes", "on")
+
+    # Seed the demo identities (alice@/bob@). Their passwords are printed in the
+    # README, so a real deployment sets SEED_DEMO_USERS=false and creates its
+    # accounts through /signup instead.
+    seed_demo_users: bool = _env("SEED_DEMO_USERS", "true").strip().lower() in (
+        "1", "true", "yes", "on")
+
 
 
 settings = Settings()

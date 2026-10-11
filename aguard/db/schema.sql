@@ -13,6 +13,7 @@
 -- -- -- 0. clean slate for re-runs (objects only; roles persist) ---------
 DROP TABLE IF EXISTS rate_limit_buckets;
 DROP TABLE IF EXISTS dynamic_clients;
+DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS agent_audit;
 DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS auth_codes;
@@ -181,6 +182,22 @@ CREATE TABLE dynamic_clients (
 );
 CREATE INDEX dynamic_clients_created_idx ON dynamic_clients (created_at);
 
+-- Local accounts (the directory /login and /signup read). The AS owns
+-- authentication, so this is auth_service state, NOT tenant data: tenants never
+-- read or write it, and the AS cannot reach their documents. `email` is PII (the
+-- redaction layer masks by that field name); `password_hash` is PBKDF2-HMAC-SHA256
+-- with a per-user salt — never plaintext.
+CREATE TABLE users (
+  sub           text PRIMARY KEY,       -- stable, non-PII id (RLS keys on this)
+  email         text NOT NULL,
+  display_name  text NOT NULL,
+  password_hash text NOT NULL,          -- "salt$hash"
+  amr           text[] NOT NULL,        -- authentication methods (step-up signal)
+  created_at    bigint NOT NULL
+);
+-- Case-insensitive uniqueness: one account per address, however it is typed.
+CREATE UNIQUE INDEX users_email_lower_idx ON users (lower(email));
+
 -- -- -- 5. RLS: ON + FORCED, fail-closed policies --------------------------
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents FORCE ROW LEVEL SECURITY;
@@ -225,9 +242,10 @@ GRANT USAGE, SELECT ON SEQUENCE agent_audit_id_seq TO app_user, agent_readonly;
 -- AS state: auth_service owns the token tables and NOTHING else.
 -- The tenant roles get no access to tokens; the AS gets no tenant data.
 GRANT SELECT, INSERT, UPDATE, DELETE ON auth_codes, refresh_tokens, dynamic_clients TO auth_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON users TO auth_service;
 GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limit_buckets TO auth_service;
 REVOKE ALL ON documents, agent_documents, agent_audit FROM auth_service;
-REVOKE ALL ON auth_codes, refresh_tokens, dynamic_clients FROM app_user, agent_readonly;
+REVOKE ALL ON auth_codes, refresh_tokens, dynamic_clients, users FROM app_user, agent_readonly;
 -- Rate counters are AS state too. Denied to tenants explicitly (not merely
 -- "never granted"): a tenant that can write this table can clear its own
 -- throttle, which is the entire control evaporating.
