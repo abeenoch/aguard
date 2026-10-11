@@ -69,6 +69,8 @@ browser authorization flow on first use, no deployment on your side:
 That is the top of the funnel. Everything below — OAuth 2.1 with agent
 principals, DB-enforced tenancy, audit trails that remember the *who* without
 the *what* — is what you graduate into when the agent gets database access.
+(Self-hosting? [The database is yours](#self-hosting-the-database-is-yours) —
+`documents` is demo data, not your new home.)
 
 ## What's inside
 
@@ -209,6 +211,36 @@ SEED_DEMO_USERS=false   # drop alice/bob (their passwords are public above)
 The two seeded demo users are the RLS fixtures the suite and the demo depend on,
 which is why they exist at all — a real deployment turns them off and uses
 `/signup`.
+
+## Self-hosting: the database is yours
+
+The `documents` table in this repo is **demo data** — a stand-in so the demo has
+something to read and something the agent gets refused deleting. A-guard is not
+a storage product and does not want your data. When you self-host, `documents`
+goes away and **your real tables** take its place:
+
+| | |
+|---|---|
+| **You bring** | your Postgres, your schema, your application (it keeps owning the data plane: create/update/delete through your own code) |
+| **A-guard brings** | identity (who the agent is, tokens, revocation), the redaction choke point for logs and audit, and the Postgres plumbing that makes "read-only, own tenant only" a property of the *database* |
+
+Adopting it on your own database is three moves:
+
+1. **Point the DSNs** (`DB_DSN_*`) at your Postgres instance.
+2. **Port the enforcement pattern** from `aguard/db/schema.sql` onto your
+   tables: a tenancy column, `CREATE POLICY` rows scoped to it, `GRANT SELECT`
+   to `agent_readonly` — and **no write grants**, so the database itself
+   refuses the agent's worst impulses. (Roles are cluster-wide, so the login
+   roles schema.sql creates work against your database as-is.)
+3. **Adapt the MCP tools** to query your tables — `list_documents` and
+   `read_document` are ~20-line functions in `aguard/mcp/server.py`, written
+   to be copied, not admired.
+
+Everything else — token machinery, RLS session wiring, the redacted audit
+trail, `redact_text` — works unchanged, because none of it cares what your
+tables are. A-guard is the guard, not the house: your data stays in your
+database under your control, and a-guard supplies the identity layer and the
+database-side enforcement that survives prompt injection.
 
 ## Deploy (systemd + a TLS reverse proxy)
 
