@@ -296,7 +296,7 @@ sequence is satisfiable — this replays discovery, DCR, the `/authorize`
 contract and a full `tools/list` over MCP:
 
 ```bash
-python scripts/cline_preflight.py     # expect 9/9 gates passed
+python scripts/cline_preflight.py     # expect 10/10 gates passed
 ```
 
 Full walkthrough, recording beats and post-run evidence:

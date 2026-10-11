@@ -52,7 +52,7 @@ uvicorn aguard.main:app --port 8080            # authorization server
 uvicorn aguard.mcp.service:app --port 8081     # MCP resource server
 ```
 
-## 4. Preflight — do not record until this is 9/9
+## 4. Preflight — do not record until this is 10/10
 
 ```bash
 python scripts/cline_preflight.py
@@ -61,13 +61,16 @@ python scripts/cline_preflight.py
 Expected output ends with:
 
 ```
-9/9 gates passed.
+10/10 gates passed.
 No blockers detected — Cline's OAuth sequence is satisfiable.
 ```
 
 Each gate is also labelled with what it proves: discovery (RFC 9728 + 8414),
-DCR of the `vscode://` redirect, the `/authorize` parameter contract (state and
-PKCE S256 are *required* and correctly rejected when absent), and a full
+that the login redirect keeps the AS's **public path prefix** (the AS is mounted
+under `/api` behind a proxy that strips it — drop the prefix and the browser
+lands on the origin root instead of the login page), DCR of the `vscode://`
+redirect, the `/authorize` parameter contract (state and PKCE S256 are
+*required* and correctly rejected when absent), and a full
 `authorize → consent → token → /mcp tools/list` run.
 
 ## 5. Point Cline at the server
@@ -115,7 +118,7 @@ Prove it before recording — against the live origin:
 ```bash
 AGUARD_BASE=https://auth.example.com/api \
 MCP_CONNECT_URL=https://auth.example.com/mcp \
-  python scripts/cline_preflight.py          # expect: 9/9 gates passed
+  python scripts/cline_preflight.py          # expect: 10/10 gates passed
 ```
 
 

@@ -245,3 +245,61 @@ def test_unauthenticated_authorize_redirects_to_login():
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("/login?next=")
 
+
+# -- the AS's PUBLIC prefix (it is mounted behind a path-stripping proxy) ---
+
+
+def test_public_path_prefix_tracks_the_issuer(monkeypatch):
+    """The prefix is the issuer's own path: "" in dev, "/api" when deployed."""
+    from types import SimpleNamespace
+
+    from aguard.oidc import urls as urls_module
+
+    for issuer, want in (("http://localhost:8080", ""),
+                         ("https://auth.example.com/api", "/api"),
+                         ("https://auth.example.com/api/", "/api")):
+        monkeypatch.setattr(urls_module, "settings",
+                            SimpleNamespace(issuer=issuer))
+        assert urls_module.public_path_prefix() == want
+
+
+def test_authorize_login_redirect_carries_the_issuer_path_prefix(monkeypatch):
+    """Behind a path-stripping proxy the app sees "/authorize", but the browser
+    must be sent under the issuer's prefix ("/api/...").
+
+    Without the prefix the login redirect — and the `next` it carries — point at
+    the ORIGIN root, so the browser lands on whatever the host serves there
+    (here, the marketing page) and the flow silently dead-ends.
+    """
+    from types import SimpleNamespace
+
+    from aguard.oidc import urls as urls_module
+
+    monkeypatch.setattr(urls_module, "settings",
+                        SimpleNamespace(issuer="https://auth.example.com/api"))
+    client.cookies.clear()
+    resp = client.get("/authorize", params=_valid_params(), follow_redirects=False)
+    assert resp.status_code == 302
+    location = resp.headers["location"]
+    assert location.startswith("/api/login?next=")
+    # `next` must round-trip to the authorize endpoint under the SAME prefix
+    target = parse_qs(urlparse(location).query)["next"][0]
+    assert target.startswith("/api/authorize?")
+
+
+def test_auth_pages_post_under_the_issuer_prefix():
+    """The form actions must carry the prefix, or the POST hits the origin."""
+    from aguard.oidc.pages import consent_form, login_form
+
+    assert 'action="/login"' in login_form(next_url="/")
+    assert 'action="/api/login"' in login_form(next_url="/", prefix="/api")
+
+    consent = consent_form(
+        client_id="demo-spa",
+        redirect_uri="https://auth.example.com/api/demo/callback",
+        scope="openid", state="st", code_challenge="x" * 43,
+        code_challenge_method="S256", nonce=None, user_label="Alice Q",
+        prefix="/api",
+    )
+    assert 'action="/api/consent"' in consent
+

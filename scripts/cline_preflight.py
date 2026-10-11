@@ -112,6 +112,26 @@ def run() -> int:
              "RFC 8414 metadata advertises registration_endpoint",
              f"scopes_supported={asm.json().get('scopes_supported')}")
 
+        # ---- Gate 1b: the login redirect keeps the AS's public path prefix --
+        # The AS is reached under a path prefix (e.g. /api) that the proxy STRIPS,
+        # so the app must rebuild browser URLs WITH that prefix. If it does not,
+        # the browser is sent to the origin root and the flow dead-ends on
+        # whatever the host serves there (a marketing page, say) — which is
+        # invisible to a client that only substring-matches "/login".
+        prefix = urlparse(BASE).path.rstrip("/")
+        _, challenge = pkce_pair()
+        probe = http.get(f"{BASE}/authorize", params={
+            "response_type": "code", "client_id": "demo-spa",
+            "redirect_uri": DEMO_REDIRECT, "scope": "openid email orders:read",
+            "state": "st-prefix", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": MCP_RESOURCE,
+        }, follow_redirects=False)
+        loc = probe.headers.get("location", "")
+        want = f"{prefix}/login"
+        gate(probe.status_code == 302 and loc.startswith(want),
+             f"login redirect carries the issuer path prefix ({want!r})",
+             loc or f"status {probe.status_code}")
+
         # ---- Gate 2: dynamic client registration with Cline's redirect ---
         dcr = http.post(f"{BASE}/register", json={
             "client_name": "Cline",

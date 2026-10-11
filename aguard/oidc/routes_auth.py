@@ -24,6 +24,7 @@ from aguard.oidc.clients import Client, ClientRegistry
 from aguard.oidc.codes import AuthCodeStore
 from aguard.oidc.pages import consent_form, error_page, login_form
 from aguard.oidc.session import create_session_token, parse_session_token
+from aguard.oidc.urls import public_path_prefix
 from aguard.oidc.users import USERS, find_by_email, verify_password
 from aguard.ratelimit import enforce_rate_limit
 from aguard.settings import settings
@@ -228,10 +229,17 @@ def authorize(
 
     sub = _current_sub(request)
     if sub is None or sub not in USERS:
-        # Full authorize URL (path+query) as `next` — /login validates it
-        # with _safe_next; it starts with "/authorize" so it round-trips.
+        # Send the browser to OUR login page, under the SAME path prefix the
+        # issuer carries. The app only sees the path AFTER the proxy strips it,
+        # so `str(request.url)` would drop the prefix and bounce the browser to
+        # the origin root (serving whatever the host has there, not our login).
+        # `next` stays a "/"-path so _safe_next's open-redirect guard is intact.
+        prefix = public_path_prefix()
+        next_path = f"{prefix}{request.url.path}"
+        if request.url.query:
+            next_path = f"{next_path}?{request.url.query}"
         return RedirectResponse(
-            f"/login?{urlencode({'next': str(request.url)})}", 302
+            f"{prefix}/login?{urlencode({'next': next_path})}", 302
         )
 
     user = USERS[sub]
@@ -247,6 +255,7 @@ def authorize(
             resource=validated.resource,
             # email shown ONLY to its owner in their own browser — never logged
             user_label=f"{user.display_name} <{user.email}>",
+            prefix=public_path_prefix(),
         )
     )
 
@@ -255,7 +264,9 @@ def authorize(
 def login_page(next_url: str = Query("/", alias="next")) -> HTMLResponse:
     # Same `next` naming rule as POST /login: the wire parameter is `next`,
     # the Python name is not.
-    return HTMLResponse(login_form(next_url=_safe_next(next_url)))
+    return HTMLResponse(
+        login_form(next_url=_safe_next(next_url), prefix=public_path_prefix())
+    )
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -299,7 +310,8 @@ def login(
     if not ok or user is None:
         return HTMLResponse(
             login_form(next_url=_safe_next(next_url),
-                       error="Invalid email or password."),
+                       error="Invalid email or password.",
+                       prefix=public_path_prefix()),
             status_code=401,
         )
 

@@ -6,6 +6,9 @@ templating starts to cost more than it saves: the Jinja2 migration with
 autoescaping on is E1 in docs/DESIGN.md.)
 
 Security properties encoded in the markup itself:
+- every form action is prefixed with the AS's public path prefix (see
+  aguard/oidc/urls.py): behind a path-stripping proxy the app sees "/login",
+  but the BROWSER must post to "/api/login" or it hits the origin root
 - login form posts to /login with `next` as a hidden field → `next` is
   validated server-side to start with "/" (open-redirect guard)
 - consent form echoes the *validated* authorize params — but the server
@@ -50,14 +53,15 @@ def rate_limited_page(*, retry_after: int) -> str:
 </body></html>"""
 
 
-def login_form(*, next_url: str, error: str | None = None) -> str:
+def login_form(*, next_url: str, error: str | None = None,
+               prefix: str = "") -> str:
     error_html = f'<p style="color:#b00020">{escape(error)}</p>' if error else ""
     return f"""<!doctype html>
 <html><head><title>Sign in — a-guard</title></head>
 <body style="font-family: sans-serif; max-width: 24rem; margin: 4rem auto;">
   <h1>Sign in</h1>
   {error_html}
-  <form method="post" action="/login">
+  <form method="post" action="{escape(prefix)}/login">
     <input type="hidden" name="next" value="{escape(next_url)}">
     <p><label>Email<br><input name="email" type="email" required
          style="width:100%"></label></p>
@@ -81,6 +85,7 @@ def consent_form(
     nonce: str | None,
     user_label: str,
     resource: str | None = None,
+    prefix: str = "",
 ) -> str:
     scope_items = "".join(
         f"<li><code>{escape(s)}</code></li>" for s in scope.split()
@@ -102,7 +107,7 @@ def consent_form(
   <ul>{scope_items}</ul>
   <p style="color:#666; font-size:.85rem">Redirect to:
      <code>{escape(redirect_uri)}</code></p>
-  <form method="post" action="/consent" style="display:inline">
+  <form method="post" action="{escape(prefix)}/consent" style="display:inline">
     <input type="hidden" name="client_id" value="{escape(client_id)}">
     <input type="hidden" name="redirect_uri" value="{escape(redirect_uri)}">
     <input type="hidden" name="scope" value="{escape(scope)}">
