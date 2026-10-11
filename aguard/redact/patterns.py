@@ -165,4 +165,43 @@ def _mask_scalars(text: str, pepper: bytes) -> str:
 def redact_text(text: str, pepper: bytes) -> str:
     """Full content pass: query params (key context) first, then scalars."""
     text = _QUERY_PARAM_RE.sub(lambda m: _mask_query_param(m, pepper), text)
+    text = _QUERY_PARAM_RE.sub(lambda m: _mask_query_param(m, pepper), text)
+    return _mask_scalars(text, pepper)
+
+
+def scan_findings(text: str, pepper: bytes) -> list[dict]:
+    """What WOULD redact_text() mask? Per-type counts, never the values.
+
+    The library-level API behind the MCP ``redact_text`` tool: lets an agent
+    (or an operator via ``agctl``) ask "is there anything sensitive in here?"
+    BEFORE echoing or forwarding text. Each count uses the same detector the
+    redaction pass uses — including the validators (Luhn for cards, date/order
+    exclusion for phones, octet range for IPv4) — so "found: 1 card" always
+    means "redact_text() will mask exactly one card".
+
+    Counts are per-pattern and may overlap (an email inside a URL query param
+    counts as both ``query_param`` and ``email``); the masked output is still
+    a single idempotent pass.
+    """
+    hits: list[tuple[str, int]] = []
+
+    def add(name: str, n: int) -> None:
+        if n:
+            hits.append((name, n))
+
+    add("jwt", len(_JWT_RE.findall(text)))
+    add("aws_key", len(_AWS_RE.findall(text)))
+    add("bearer_token", len(_BEARER_RE.findall(text)))
+    add("secret_assignment", len(_BARE_SECRET_ASSIGN_RE.findall(text)))
+    add("ipv4", sum(1 for m in _IPV4_RE.finditer(text)
+                    if _mask_ipv4(m) != m.group(0)))
+    add("card", sum(1 for m in _CARD_CANDIDATE_RE.finditer(text)
+                    if _mask_card(m.group(0)) != m.group(0)))
+    add("ssn", len(_SSN_RE.findall(text)))
+    add("email", len(_EMAIL_RE.findall(text)))
+    add("phone", sum(1 for m in _PHONE_RUN_RE.finditer(text)
+                     if _mask_phone(m.group(0)) != m.group(0)))
+    add("query_param", sum(1 for m in _QUERY_PARAM_RE.finditer(text)
+                           if _mask_query_param(m, pepper) != m.group(0)))
+    return [{"type": name, "count": n} for name, n in hits]
     return _mask_scalars(text, pepper)

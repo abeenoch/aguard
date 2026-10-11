@@ -191,3 +191,42 @@ def test_filter_failure_emits_degraded_marker_not_raw():
     assert record.msg == "[LOG_DROPPED: redactor_error]"
     assert "alice" not in record.msg
 
+
+# ------------------------------ scan_findings ------------------------------
+
+
+def test_scan_findings_counts_match_what_redact_text_masks():
+    from aguard.redact.patterns import redact_text, scan_findings
+    text = ("card 4111 1111 1111 1111, mail bob@example.com, "
+            "from 203.0.113.42, page /login?next=carol@s.com")
+    findings = {f["type"]: f["count"] for f in scan_findings(text, PEPPER)}
+    assert findings["card"] == 1
+    assert findings["email"] == 2      # one bare + one in the query param
+    assert findings["ipv4"] == 1
+    assert findings["query_param"] >= 1
+    masked = redact_text(text, PEPPER)
+    assert "4111 1111 1111 1111" not in masked
+    assert "bob@example.com" not in masked
+    assert "203.0.113.42" not in masked
+
+
+def test_scan_findings_never_returns_values():
+    """The report is for COUNTS — the raw values must not leak through it."""
+    from aguard.redact.patterns import scan_findings
+    text = "secret password=hunter2 card 5555555555554444"
+    report = str(scan_findings(text, PEPPER))
+    assert "hunter2" not in report
+    assert "5555555555554444" not in report
+
+
+def test_scan_findings_validators_apply():
+    """Luhn-invalid 16-digit runs and future dates are not findings."""
+    from aguard.redact.patterns import scan_findings
+    text = "order 1234567812345678 due 2026-10-11"
+    assert scan_findings(text, PEPPER) == []
+
+
+def test_scan_findings_clean_text_is_empty():
+    from aguard.redact.patterns import scan_findings
+    assert scan_findings("nothing to see here", PEPPER) == []
+

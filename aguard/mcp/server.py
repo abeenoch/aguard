@@ -1,11 +1,14 @@
 """A-guard MCP resource server: documents as tools, the DB as the enforcer.
 
-Three tools, one privilege story:
+Four tools, one privilege story:
   list_documents   read, own tenant
   read_document    read, own tenant, by id
   delete_document  the handler EXISTS (so the refusal is visible), but an
                    agent's scoped session makes Postgres raise
                    InsufficientPrivilege before a single row is touched.
+  redact_text      scrub PII from arbitrary text with the SAME engine that
+                   guards this server's own logs — the reusable, chat-facing
+                   face of the library. Authed like every other tool.
 
 Handlers stay dumb: read the verified principal, open a scoped session, run
 SQL. All permission logic lives in GRANTs, RLS, and column grants — the very
@@ -38,7 +41,11 @@ logger = logging.getLogger("a-guard.mcp")
 INSTRUCTIONS = (
     "A-guard demo document server. Read tools return only the caller's own "
     "tenant rows (row-level security). Write tools exist but are refused for "
-    "agent tokens by database policy — the refusal is the lesson, not a bug."
+    "agent tokens by database policy — the refusal is the lesson, not a bug. "
+    "redact_text scrubs PII (cards, emails, phones, IPs, secrets) from any "
+    "text using the same engine that redacts this server's own audit trail — "
+    "use it BEFORE echoing user-provided sensitive values back or forwarding "
+    "content to another tool or provider."
 )
 
 
@@ -161,6 +168,39 @@ def delete_document(document_id: int, ctx: Context) -> dict:
     return {"deleted": True, "id": deleted[0]}
 
 
+def redact_text(text: str, ctx: Context) -> dict:
+    """Scrub PII from arbitrary text (the library engine, over MCP).
+
+    Cards (Luhn-gated), emails (keyed-HMAC correlation tags), phones, IPv4,
+    JWTs, bearer tokens, secret assignments, sensitive query params. Returns
+    the redacted string plus per-type counts — never the detected values.
+
+    Intended for an agent loop: run text through here BEFORE echoing
+    user-provided sensitive values back into the chat or handing them to
+    another tool/provider. The audit row records only character/finding
+    counts — the raw text never touches the database.
+    """
+    from aguard.redact.patterns import redact_text as scrub
+    from aguard.redact.patterns import scan_findings
+
+    principal = current_principal()
+    rid = uuid.uuid4().hex[:16]
+    findings = scan_findings(text, settings.log_pepper)
+    redacted = scrub(text, settings.log_pepper)
+    total = sum(f["count"] for f in findings)
+    logger.info({"event": "mcp.redact.text", "request_id": rid,
+                 "sub": principal.sub, "client_id": principal.client_id,
+                 "chars": len(text), "findings": total})
+    with scoped_session(kind=_kind(principal), sub=principal.sub) as conn:  # type: ignore[arg-type]
+        with conn.cursor() as cur:
+            # Statement carries counts only: the audit trail must not become
+            # the leak the tool exists to prevent.
+            _audit(cur, principal, rid,
+                   f"MCP redact_text chars={len(text)} findings={total}",
+                   total)
+    return {"redacted": redacted, "findings": findings}
+
+
 def build_mcp(keys: KeySet) -> FastMCP:
     """Construct the MCP server bound to a key set.
 
@@ -198,6 +238,6 @@ def build_mcp(keys: KeySet) -> FastMCP:
         warn_on_duplicate_tools=False,
         transport_security=_transport_security(),
     )
-    for fn in (list_documents, read_document, delete_document):
+    for fn in (list_documents, read_document, delete_document, redact_text):
         server.add_tool(fn)
     return server

@@ -276,11 +276,12 @@ def test_mcp_rejects_token_minted_for_another_audience(env):
 # ------------------------------- tools/list --------------------------------
 
 
-def test_mcp_lists_the_three_document_tools(env):
+def test_mcp_lists_the_four_document_tools(env):
     token = _agent_self_token(env)
     payload = _rpc(env, token, "tools/list").json()
     names = {t["name"] for t in payload["result"]["tools"]}
-    assert names == {"list_documents", "read_document", "delete_document"}
+    assert names == {"list_documents", "read_document", "delete_document",
+                     "redact_text"}
 
 
 # ------------------------------ tools/call ---------------------------------
@@ -347,3 +348,63 @@ def test_mcp_human_surfaces_pii_and_redactor_scrubs_audit(env):
             row = cur.fetchone()
     assert row is not None, "refused MCP operation was not audited"
     assert row[1] == 0
+
+
+# --------------------------- redact_text tool ------------------------------
+
+
+def test_mcp_redact_text_masks_card_and_email(env):
+    """The chat-facing tool: paste a card number and an email, get back the
+    masked form and the finding counts — the same engine that scrubs the
+    server's own audit trail."""
+    token = _agent_self_token(env)
+    chat = "My card is 4111 1111 1111 1111 and email alice@example.com"
+    outcome = _call_tool(env, token, "redact_text", {"text": chat})
+    redacted = outcome["redacted"]
+    assert "4111 1111 1111 1111" not in redacted
+    assert "****-****-****-1111" in redacted
+    assert "alice@example.com" not in redacted
+    assert "email[h:" in redacted
+    by_type = {f["type"]: f["count"] for f in outcome["findings"]}
+    assert by_type.get("card") == 1
+    assert by_type.get("email") == 1
+
+
+def test_mcp_redact_text_luhn_false_positives_survive(env):
+    """A 16-digit run that fails Luhn is NOT a card (order ids, hashes) —
+    the tool must not butcher it, proving it is not naive regex."""
+    token = _agent_self_token(env)
+    outcome = _call_tool(env, token, "redact_text",
+                         {"text": "order 1234567812345678 shipped"})
+    assert "1234567812345678" in outcome["redacted"]
+    assert not any(f["type"] == "card" for f in outcome["findings"])
+
+
+def test_mcp_redact_text_audit_row_holds_counts_not_content(env):
+    """The tool exists to stop PII leaking into records — so its own audit
+    row must contain counts only, never the submitted text."""
+    token = _agent_self_token(env)
+    secret = "api_key=sk-live-9f3a1b2c and 5555555555554444"
+    _call_tool(env, token, "redact_text", {"text": secret})
+    with scoped_session(kind="human", sub="svc:cli-agent") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT statement FROM agent_audit "
+                "WHERE statement LIKE '%%redact_text%%' "
+                "ORDER BY id DESC LIMIT 1")
+            row = cur.fetchone()
+    assert row is not None, "redact_text call was not audited"
+    statement = row[0]
+    assert "chars=" in statement and "findings=" in statement
+    for fragment in ("sk-live", "5555555555554444"):
+        assert fragment not in statement
+
+
+def test_mcp_redact_text_idempotent_output(env):
+    """Running redact_text on its own output changes nothing — an agent that
+    re-scans a forwarded message must not double-mask or corrupt tags."""
+    token = _agent_self_token(env)
+    chat = "ping alice@example.com from 203.0.113.42"
+    once = _call_tool(env, token, "redact_text", {"text": chat})["redacted"]
+    twice = _call_tool(env, token, "redact_text", {"text": once})["redacted"]
+    assert once == twice
