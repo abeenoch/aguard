@@ -145,6 +145,39 @@ what it started. Recording? The storyboard, narration and export commands are in
 The app prints `INSECURE DEV SECRETS ACTIVE` at startup until you override
 `SESSION_SECRET` and `LOG_HASH_PEPPER` — that warning is intentional.
 
+## Deploy (nginx + systemd)
+
+Everything needed to run a-guard on a server lives in this repo:
+
+| File | Role |
+|---|---|
+| `systemd/aguard-as.service`  | authorization server on `127.0.0.1:8080` |
+| `systemd/aguard-mcp.service` | MCP resource server on `127.0.0.1:8081` (holds no signing key) |
+| `nginx/auth.example.com.conf` | public TLS surface: `/` static page, `/api` → AS, `/mcp` → RS, plus RFC 9728/8414 discovery |
+| `web/index.html` | the landing page served at `/` (one self-contained file, no build step) |
+| `.env.example` | every knob (issuer, DSNs, secrets, signing keys) |
+
+```bash
+# 1. configuration — copy the template, then set the issuer, DSNs and secrets
+cp .env.example .env
+
+# 2. the two services (survive a crash and a reboot)
+sudo cp systemd/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aguard-as aguard-mcp
+
+# 3. the public surface
+sudo mkdir -p /var/www/aguard && sudo cp web/index.html /var/www/aguard/
+sudo cp nginx/auth.example.com.conf /etc/nginx/sites-available/aguard
+sudo ln -sf /etc/nginx/sites-available/aguard /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d auth.example.com        # TLS + auto-renew
+```
+
+Both services bind **loopback only** — nginx terminates TLS and proxies to them.
+See [`systemd/README.md`](systemd/README.md) for install/config/ops details; the
+nginx file's header documents its routing table.
+
 ## The three guarantees, verified by tests
 
 **1. Identity is proven, not asserted.** PKCE S256 only (`plain` rejected),
@@ -252,8 +285,13 @@ Cline is an editor extension, so it registers a **private-use** redirect
 loopback port. That is opt-in, because `https`/loopback stays the default:
 
 ```bash
-DCR_ALLOWED_REDIRECT_SCHEMES=vscode   # in .env, then restart the server
+DCR_ALLOWED_REDIRECT_SCHEMES=vscode   # in the AS's environment, then restart it
 ```
+
+Set it in the server's **launch environment**, not in `.env`: the suite reads
+`.env` to pin the default-strict posture (`tests/test_dcr_redirect_policy.py`),
+so exporting it there turns the tests red. The shipped
+[`systemd/aguard-as.service`](systemd/aguard-as.service) already sets it.
 
 Before recording or demoing with a given client, check that its exact request
 sequence is satisfiable — this replays discovery, DCR, the `/authorize`
@@ -305,7 +343,7 @@ a real run:
     8  2026-10-09 22:04:07   usr_alice     chat-agent      0  MCP delete_document id=7
 ```
 
-## Protect your own MCP server
+## Integrate: protect your own MCP server
 
 The other half of the product: your server accepts a-guard-issued tokens
 **without holding a signing key**. `ResourceServerGuard` fetches the issuer's
