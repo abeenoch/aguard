@@ -65,6 +65,7 @@ _WINDOW_SECONDS = {
     "login_account": 300,     # 5 min: one victim, many source addresses
     "register": 3600,         # DCR is a rare, deliberate operation
     "signup": 3600,           # account creation, likewise
+    "redact": 60,             # unauthenticated playground: 10/min per address
 }
 
 #: Bucket-key component for an identity we could not determine (no socket
@@ -431,6 +432,10 @@ def default_policies() -> dict[str, RateLimit]:
         # caller creating a durable record — so it shares the same budget.
         "signup": RateLimit(settings.rate_limit_register,
                             _WINDOW_SECONDS["signup"]),
+        # Unauthenticated /redact playground (MCP resource server): counted per
+        # caller address, deliberately the tightest budget shipped.
+        "redact": RateLimit(settings.rate_limit_redact,
+                            _WINDOW_SECONDS["redact"]),
     }
 
 

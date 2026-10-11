@@ -421,3 +421,69 @@ def test_mcp_redact_text_idempotent_output(env):
     once = _call_tool(env, token, "redact_text", {"text": chat})["redacted"]
     twice = _call_tool(env, token, "redact_text", {"text": once})["redacted"]
     assert once == twice
+
+
+# --------------------------- /redact playground ----------------------------
+#
+# Every playground test carries a unique X-Real-IP: the endpoint counts
+# requests per caller address and the limiter is per-app-instance, so tests
+# sharing an identity would spend each other's budget. The header is what the
+# TLS proxy overwrites in production — in-process it plays that role.
+
+
+def _redact(env, text=None, ip="203.0.113.101", raw=None):
+    body = raw if raw is not None else {"text": text}
+    return env.mcp_client.post(
+        "/redact", json=body, headers={"X-Real-IP": ip},
+    )
+
+
+def test_redact_playground_masks_without_any_auth(env):
+    """The adoption surface: a stranger with a curl, no OAuth, no client.
+    Same engine, same counts-only discipline — the submitted text must not
+    survive into the response as anything but redacted."""
+    r = _redact(env, "card 4111 1111 1111 1111 and alice@example.com",
+                ip="203.0.113.101")
+    assert r.status_code == 200
+    out = r.json()
+    assert "4111 1111" not in out["redacted"]
+    assert "alice@example.com" not in out["redacted"]
+    by_type = {f["type"]: f["count"] for f in out["findings"]}
+    assert by_type.get("card") == 1 and by_type.get("email") == 1
+
+
+def test_redact_playground_rejects_malformed_bodies(env):
+    """Counted-then-rejected: a bad body never reaches the regex engine."""
+    for raw, status in (({}, 400), ({"text": 42}, 400),
+                        ([1, 2, 3], 400)):
+        r = _redact(env, raw=raw, ip="203.0.113.102")
+        assert r.status_code == status, (raw, r.status_code)
+        assert "error" in r.json()
+    r = env.mcp_client.post(  # not JSON at all
+        "/redact", content=b"not json",
+        headers={"X-Real-IP": "203.0.113.102",
+                 "Content-Type": "application/json"})
+    assert r.status_code == 400
+
+
+def test_redact_playground_refuses_oversized_text(env):
+    """The size cap fires BEFORE any regex work (a CPU DoS with a body)."""
+    r = _redact(env, "x" * (settings.redact_endpoint_max_chars + 1),
+                ip="203.0.113.103")
+    assert r.status_code == 413
+    assert "payload_too_large" in r.json()["error"]
+
+
+def test_redact_playground_rate_limited_per_address(env):
+    """RATE_LIMIT_REDACT requests per 60s window, keyed on the proxy-provided
+    address — and a different address is NOT affected (per-address, not global)."""
+    ip = "203.0.113.104"
+    codes = [_redact(env, "hi", ip=ip).status_code
+             for _ in range(settings.rate_limit_redact + 1)]
+    assert codes[:settings.rate_limit_redact] == [200] * settings.rate_limit_redact
+    assert codes[-1] == 429
+    assert int(env.mcp_client.post(
+        "/redact", json={"text": "hi"},
+        headers={"X-Real-IP": ip}).headers["Retry-After"]) >= 0
+    # A different address keeps its own budget.
+    assert _redact(env, "hi", ip="203.0.113.105").status_code == 200

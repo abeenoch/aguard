@@ -241,6 +241,15 @@ class Settings:
     rate_limit_login: int = int(_env("RATE_LIMIT_LOGIN", "10"))
     rate_limit_login_account: int = int(_env("RATE_LIMIT_LOGIN_ACCOUNT", "5"))
     rate_limit_register: int = int(_env("RATE_LIMIT_REGISTER", "10"))
+    # The unauthenticated /redact playground on the MCP resource server. The
+    # lowest budget of any policy: the endpoint exists so a stranger can FEEL
+    # the engine in five seconds (curl → masked), and its abuse ceiling is a
+    # free regex service — generous enough to demo, useless to scrape.
+    rate_limit_redact: int = int(_env("RATE_LIMIT_REDACT", "10"))
+    # Refuse oversized submissions before any regex work. A playground that
+    # accepts unbounded input is a CPU DoS with a JSON body.
+    redact_endpoint_max_chars: int = int(
+        _env("REDACT_ENDPOINT_MAX_CHARS", "10000"))
 
     # Where attempts are counted. "memory" is PER PROCESS: with N workers the
     # effective ceiling is N x limit. A shared backend is not implemented yet,

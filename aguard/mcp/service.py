@@ -14,6 +14,8 @@ tokens already carry.
 
 Surface:
   POST /mcp                                   Streamable HTTP (bearer-guarded)
+  POST /redact                                playground: the engine, no OAuth,
+                                              rate-limited per caller address
   GET  /.well-known/oauth-protected-resource[/mcp]   RFC 9728 (SDK-provided)
   GET  /healthz                               liveness (dependency-free)
   GET  /readyz                                readiness (JWKS reachable + DB)
@@ -34,6 +36,13 @@ from aguard.db.session import get_pool
 from aguard.mcp.server import build_mcp
 from aguard.oidc.remote_keys import RemoteKeyStore
 from aguard.oidc.validation import KeySet
+from aguard.ratelimit import (
+    _WINDOW_SECONDS,
+    InMemoryRateLimiter,
+    RateLimit,
+    _client_ip,
+    _identity_key,
+)
 from aguard.redact.logging import install as install_redaction
 from aguard.redact.logging import wire_uvicorn
 from aguard.settings import settings
@@ -117,6 +126,86 @@ def create_mcp_app(key_source: KeySet | None = None):
                                  status=status, body=body)
         return JSONResponse(body, status_code=status,
                             headers={"Cache-Control": "no-store"})
+
+    # ---- the playground: try the redaction engine with no OAuth at all -------
+    #
+    # Why this exists (the adoption story): every OTHER surface of a-guard
+    # requires identity — an issuer, a client, tokens. The engine itself is
+    # pure regex + keyed HMAC over a string, so it can be tried safely by a
+    # stranger with one curl. A visitor who has FELT "card 4111… → ****-…"
+    # reads the rest of the README as an answer, not a spec.
+    #
+    # Ground rules, each one a security decision:
+    #   * unauthenticated — that is the point; the tightest rate-limit policy
+    #     shipped (RATE_LIMIT_REDACT/60s, per caller address) is the cost.
+    #   * stateless — no database, no audit row, no principal. There is no
+    #     identity to audit, and the request body never touches a log line
+    #     (the redaction choke point is installed for exactly the counts we
+    #     DO emit: chars and findings, never the text).
+    #   * size-capped before any regex work — an unbounded playground is a
+    #     CPU DoS with a JSON body (REDACT_ENDPOINT_MAX_CHARS).
+    limiter = InMemoryRateLimiter(
+        {"redact": RateLimit(settings.rate_limit_redact,
+                             _WINDOW_SECONDS["redact"])},
+        max_keys=settings.rate_limit_max_keys,
+    )
+    max_chars = settings.redact_endpoint_max_chars
+
+    @server.custom_route("/redact", methods=["POST"])
+    async def redact_playground(request: Any) -> JSONResponse:
+        # Identity discipline, adapted for life behind the TLS reverse proxy:
+        # through nginx every socket peer is 127.0.0.1, so _client_ip alone
+        # would put ALL visitors in one shared bucket. X-Real-IP is set by the
+        # proxy from the real socket address (a client-supplied value is
+        # overwritten), making it trustworthy here — the same discipline as
+        # X-Forwarded-For behind a proxy that REPLACES it. On the raw port
+        # (localhost-only in every shipped config) the header is absent and
+        # _client_ip's socket-peer default applies.
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        identity = _identity_key("ip", real_ip or _client_ip(request))
+        decision = limiter.hit("redact", identity)
+        if not decision.allowed:
+            return JSONResponse(
+                {"error": "temporarily_unavailable",
+                 "error_description":
+                     "rate limit exceeded; retry later"},
+                status_code=429,
+                headers={"Retry-After": str(decision.retry_after),
+                         "Cache-Control": "no-store"})
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"error": "invalid_request",
+                 "error_description": "body must be JSON {\"text\": \"...\"}"},
+                status_code=400, headers={"Cache-Control": "no-store"})
+        text = payload.get("text") if isinstance(payload, dict) else None
+        if not isinstance(text, str):
+            return JSONResponse(
+                {"error": "invalid_request",
+                 "error_description": "missing \"text\" string field"},
+                status_code=400, headers={"Cache-Control": "no-store"})
+        if len(text) > max_chars:
+            return JSONResponse(
+                {"error": "payload_too_large",
+                 "error_description":
+                     f"text exceeds {max_chars} characters"},
+                status_code=413, headers={"Cache-Control": "no-store"})
+
+        from aguard.redact.patterns import redact_text as scrub
+        from aguard.redact.patterns import scan_findings
+        findings = scan_findings(text, settings.log_pepper)
+        redacted = scrub(text, settings.log_pepper)
+        # Counts only — the same audit discipline as the MCP tool: a log line
+        # that could echo the submitted text back would make the playground
+        # the exact leak the engine exists to prevent.
+        logger.info({"event": "redact.playground",
+                     "chars": len(text),
+                     "findings": sum(f["count"] for f in findings)})
+        return JSONResponse({"redacted": redacted, "findings": findings},
+                            headers={"Cache-Control": "no-store"})
+
 
     # streamable_http_app() carries the bearer middleware (401 + RFC 9728
     # resource_metadata) AND the SDK's protected-resource metadata route,

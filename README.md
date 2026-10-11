@@ -21,6 +21,55 @@ When an AI agent can touch your database, a prompt injection is a data breach.
 A-guard makes the **database** the enforcement point — not application code the
 agent might talk its way around.
 
+## Try it in 5 seconds — no account, no keys, no deploy
+
+The redaction engine (the same one that scrubs a-guard's own audit trail) has an
+**unauthenticated playground** on the live server:
+
+```bash
+curl -s https://aguard.abeenoch.online/redact \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "my card is 4111 1111 1111 1111, mail alice@example.com, address flat 4, oguntunde estate"}'
+```
+
+```json
+{
+  "redacted": "my card is ****-****-****-1111, mail email[h:5415816037c0], address [ADDRESS_REDACTED]",
+  "findings": [
+    { "type": "card",    "count": 1 },
+    { "type": "email",   "count": 1 },
+    { "type": "address", "count": 1 }
+  ]
+}
+```
+
+Emails become keyed-HMAC tags (`email[h:…]`): correlatable across log lines,
+never reversible. Findings are counts only — the detected values are returned to
+you in the redacted string and then gone: **nothing is stored, nothing is
+logged but the counts.** The playground is rate-limited (10 req/min per address)
+and capped at 10,000 characters — knobs in `.env.example`
+(`RATE_LIMIT_REDACT`, `REDACT_ENDPOINT_MAX_CHARS`).
+
+Prefer it inside an agent? Add the hosted tool to any MCP host — Cline runs the
+browser authorization flow on first use, no deployment on your side:
+
+```json
+{
+  "mcpServers": {
+    "a-guard-redact": {
+      "type": "streamableHttp",
+      "url": "https://aguard.abeenoch.online/mcp",
+      "disabled": false,
+      "autoApprove": ["redact_text"]
+    }
+  }
+}
+```
+
+That is the top of the funnel. Everything below — OAuth 2.1 with agent
+principals, DB-enforced tenancy, audit trails that remember the *who* without
+the *what* — is what you graduate into when the agent gets database access.
+
 ## What's inside
 
 | Layer | What it does | Where |
@@ -256,13 +305,14 @@ POST /token
 grant_type=client_credentials&resource=http://localhost:8081/mcp
 ```
 
-Three tools — and the third is the point:
+Four tools — the fourth is the one anyone can try without deploying anything:
 
 | Tool | Human | Agent |
 |---|---|---|
 | `list_documents` | own rows | own tenant rows (RLS) |
 | `read_document` | own rows | own tenant rows (RLS) |
 | `delete_document` | own rows ✅ | **refused by Postgres** ⛔ |
+| `redact_text` | ✅ | ✅ — scrub PII before echoing/forwarding text |
 
 An agent's `delete_document` call reaches the handler and runs the `DELETE` —
 then Postgres raises `InsufficientPrivilege`, because the agent's session is
@@ -421,6 +471,7 @@ crypto has a review package written for an external reviewer in
 - **Persistent authorization state** ✅ — pluggable stores; `STORE_BACKEND=postgres` makes code tombstones and refresh-family revocation survive restarts and span workers
 - **Rate limiting + readiness** ✅ — `/token`, `/login` and `/register` are limited per address (plus per account for login); `GET /readyz` verifies the database and keystore, while `/healthz` stays dependency-free liveness
 - **Split resource server** ✅ — the MCP server is its own service (`aguard/mcp/service.py`) on its own port, verifying via the AS's JWKS and holding no signing key
+- **Zero-auth playground** ✅ — `POST /redact` runs the redaction engine for any visitor with a curl (rate-limited per address, size-capped, stateless: no DB, no audit row, nothing stored)
 - **Signing keys via env / KMS** ✅ — `KEY_SOURCE=file|env|aws-kms|gcp-kms|vault`, one `Signer` interface; the KMS private key never enters the process
 - **One-command install** ✅ — `docker compose up` starts the database, the AS and the resource server
 - **External crypto review** ⏳ — reviewer package + internal findings ship; the third-party review is the remaining step before 1.0
