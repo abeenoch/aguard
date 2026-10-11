@@ -19,11 +19,11 @@
 #
 # The demo is SELF-CONTAINED: it pins the identity (issuer + resource id) of the
 # services it starts to AGUARD_BASE / MCP_RESOURCE_URL and points the smoke client
-# at the same endpoints, so a .env aimed at a public deployment (behind nginx/TLS)
-# does not break a local run. .env is never modified — a real environment variable
-# simply wins over it (see aguard/settings.py), and only the child processes this
-# script spawns see these. Point AGUARD_BASE / MCP_RESOURCE_URL at other ports to
-# run the demo while a deployment already owns 8080/8081.
+# at the same endpoints, so a .env aimed at a public deployment (behind a TLS
+# reverse proxy) does not break a local run. .env is never modified — a real
+# environment variable simply wins over it (see aguard/settings.py), and only the
+# child processes this script spawns see these. Point AGUARD_BASE /
+# MCP_RESOURCE_URL at other ports to run the demo while a deployment owns 8080/8081.
 #
 # Assumes host[:port] URLs. If the database is not initialised, the readiness
 # step will tell you to run `scripts/agctl.py init`.
@@ -104,8 +104,8 @@ export RATE_LIMIT_LOGIN="${DEMO_RATE_LIMIT_LOGIN:-1000}"
 export RATE_LIMIT_LOGIN_ACCOUNT="${DEMO_RATE_LIMIT_LOGIN_ACCOUNT:-1000}"
 # Self-contained identity for the services THIS script starts and for the smoke
 # client it runs. `.env` may point at a public deployment (e.g. the production
-# issuer behind nginx); the loopback smoke client cannot TLS-verify such an
-# origin, so the demo pins AGUARD_BASE / MCP_RESOURCE_URL as the identity too.
+# issuer behind a TLS reverse proxy); the loopback smoke client cannot TLS-verify
+# such an origin, so the demo pins AGUARD_BASE / MCP_RESOURCE_URL as the identity.
 # Real environment wins over .env (aguard/settings.py), so these reach only the
 # child processes below — .env itself is never written.
 export OIDC_ISSUER="$AS_BASE"

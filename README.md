@@ -145,15 +145,14 @@ what it started. Recording? The storyboard, narration and export commands are in
 The app prints `INSECURE DEV SECRETS ACTIVE` at startup until you override
 `SESSION_SECRET` and `LOG_HASH_PEPPER` — that warning is intentional.
 
-## Deploy (nginx + systemd)
+## Deploy (systemd + a TLS reverse proxy)
 
-Everything needed to run a-guard on a server lives in this repo:
+The files that run a-guard on a server live in this repo:
 
 | File | Role |
 |---|---|
 | `systemd/aguard-as.service`  | authorization server on `127.0.0.1:8080` |
 | `systemd/aguard-mcp.service` | MCP resource server on `127.0.0.1:8081` (holds no signing key) |
-| `nginx/auth.example.com.conf` | public TLS surface: `/` static page, `/api` → AS, `/mcp` → RS, plus RFC 9728/8414 discovery |
 | `web/index.html` | the landing page served at `/` (one self-contained file, no build step) |
 | `.env.example` | every knob (issuer, DSNs, secrets, signing keys) |
 
@@ -166,17 +165,16 @@ sudo cp systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now aguard-as aguard-mcp
 
-# 3. the public surface
+# 3. publish the landing page
 sudo mkdir -p /var/www/aguard && sudo cp web/index.html /var/www/aguard/
-sudo cp nginx/auth.example.com.conf /etc/nginx/sites-available/aguard
-sudo ln -sf /etc/nginx/sites-available/aguard /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d auth.example.com        # TLS + auto-renew
 ```
 
-Both services bind **loopback only** — nginx terminates TLS and proxies to them.
-See [`systemd/README.md`](systemd/README.md) for install/config/ops details; the
-nginx file's header documents its routing table.
+Both services bind **loopback only**: a TLS-terminating reverse proxy sits in
+front and forwards `/api` → `127.0.0.1:8080` and `/mcp` → `127.0.0.1:8081`, plus
+the origin-level `.well-known/` discovery paths (resource metadata → the
+resource server; AS metadata → the AS). That per-host proxy config is
+environment-specific and deliberately **not** shipped here. See
+[`systemd/README.md`](systemd/README.md) for service install/config/ops.
 
 ## The three guarantees, verified by tests
 

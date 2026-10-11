@@ -17,8 +17,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=aguard-mcp
-# Binds loopback only: nginx proxies the public /mcp (and the origin-level
-# RFC 9728 protected-resource metadata) to it.
+# Binds loopback only: a TLS-terminating reverse proxy in front serves the public
+# /mcp (and the origin-level RFC 9728 protected-resource metadata).
 NoNewPrivileges=true
 
 [Install]

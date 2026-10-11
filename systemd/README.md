@@ -2,8 +2,8 @@
 
 Two units, because the topology is two processes on purpose (see
 `docs/DESIGN.md`): the authorization server and the MCP resource server. Both
-bind **loopback only** — nginx terminates TLS and proxies `/api` and `/mcp`
-(see `nginx/auth.example.com.conf`).
+bind **loopback only** — a TLS-terminating reverse proxy sits in front and
+forwards `/api` and `/mcp` to them.
 
 | Unit | ASGI app | Port | Holds a signing key |
 |---|---|---|---|

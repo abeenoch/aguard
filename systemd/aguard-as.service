@@ -24,7 +24,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=aguard-as
-# The AS binds loopback only: nginx terminates TLS and proxies /api to it.
+# The AS binds loopback only: a TLS-terminating reverse proxy in front proxies
+# /api to it.
 NoNewPrivileges=true
 
 [Install]

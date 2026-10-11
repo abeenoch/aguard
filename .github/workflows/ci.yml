@@ -152,10 +152,10 @@ jobs:
       - name: Vulnerable dependencies (pip-audit)
         run: pip-audit .
 
-  # The files that run the service on a server — the nginx site and the systemd
-  # units — are deployment surfaces nothing else exercises: a syntax error in
-  # either would only surface at deploy time. This job proves they parse, and
-  # syntax-checks the shell tooling the docs tell you to run.
+  # The systemd units are how the service runs on a server, and nothing else in
+  # CI reads them: a syntax error would only surface at deploy time. This job
+  # proves they parse, and syntax-checks the shell tooling the docs tell you to
+  # run.
   deploy:
     runs-on: ubuntu-24.04
     steps:
@@ -170,23 +170,6 @@ jobs:
           sudo touch /root/aguard/.venv/bin/uvicorn
           sudo chmod +x /root/aguard/.venv/bin/uvicorn
           sudo systemd-analyze verify systemd/aguard-as.service systemd/aguard-mcp.service
-
-      # The site file references Let's Encrypt paths, so lay down an ephemeral
-      # self-signed pair at exactly those paths, then validate the file we
-      # actually deploy (byte for byte) with `nginx -t`.
-      - name: Validate the nginx site config
-        run: |
-          sudo mkdir -p /etc/letsencrypt/live/auth.example.com
-          sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -keyout /etc/letsencrypt/live/auth.example.com/privkey.pem \
-            -out /etc/letsencrypt/live/auth.example.com/fullchain.pem \
-            -subj "/CN=auth.example.com"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq nginx
-          d="$(mktemp -d)"
-          printf 'worker_processes 1;\npid %s/nginx.pid;\nerror_log %s/error.log;\nevents {}\nhttp {\n    access_log off;\n    include %s/nginx/auth.example.com.conf;\n}\n' \
-            "$d" "$d" "$PWD" > "$d/nginx.conf"
-          sudo nginx -t -c "$d/nginx.conf"
 
       - name: Shell syntax
         run: for f in scripts/*.sh; do echo "bash -n $f"; bash -n "$f"; done
