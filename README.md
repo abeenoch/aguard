@@ -169,7 +169,7 @@ python scripts/agctl.py audit      # the audit trail (rows=0 ⇒ refused)
 python scripts/mcp_smoke.py        # real MCP client against a live resource server
 curl -s localhost:8080/readyz      # AS readiness: database + keystore
 curl -s localhost:8081/readyz      # resource server readiness: JWKS + database
-pytest                             # 278 tests
+pytest                             # 305 tests
 ruff check . && mypy               # lint + types (also gates CI)
 ```
 
@@ -491,7 +491,9 @@ agctl --help                    # console script (see docs/RELEASING.md)
 
 ## Status
 
-Alpha. 278 tests green (unit + live-server smoke). Known limitations are
+Alpha. 305 tests green (unit + live-server smoke, isolated in a throwaway
+`agent_auth_test` database — a pytest run can no longer touch your deployment
+data). Known limitations are
 tracked in [SECURITY.md](SECURITY.md) — authorization state defaults to
 in-memory (set `STORE_BACKEND=postgres` before running more than one worker),
 rate-limit counters default to per-process as well (set
@@ -519,6 +521,8 @@ crypto has a review package written for an external reviewer in
 - **Zero-auth playground** ✅ — `POST /redact` runs the redaction engine for any visitor with a curl (rate-limited per address, size-capped, stateless: no DB, no audit row, nothing stored)
 - **Signing keys via env / KMS** ✅ — `KEY_SOURCE=file|env|aws-kms|gcp-kms|vault`, one `Signer` interface; the KMS private key never enters the process
 - **One-command install** ✅ — `docker compose up` starts the database, the AS and the resource server
+- **Test-database isolation** ✅ — pytest creates and populates `agent_auth_test` (never a deployment database), and every DB-backed module runs against it regardless of collection order
+- **Self-hosting story** ✅ — README documents what you bring (your Postgres, your tables) vs. what a-guard brings (identity, redaction, the RLS/grant pattern); hosted users get the same enforcement in a private workspace
 - **External crypto review** ⏳ — reviewer package + internal findings ship; the third-party review is the remaining step before 1.0
 - Restyle the auth pages (Jinja2 + design tokens) — see [docs/DESIGN.md](docs/DESIGN.md) → E1
 - Move users/clients out of Python constants into Postgres → E2

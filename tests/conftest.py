@@ -18,6 +18,8 @@ module, which makes this the only place it can happen.
 """
 import os
 
+import pytest
+
 # setdefault, not assignment: an explicit override (CI, a debugging shell)
 # still wins over these.
 for _name, _value in {
@@ -80,3 +82,26 @@ for _name, _default in (
 ):
     os.environ.setdefault(
         _name, _default.replace("/agent_auth", f"/{_test_db}"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_database():
+    """Apply schema.sql into the throwaway test database, once, up front.
+
+    Why session scope: alphabetical module order used to decide whether the
+    DB-backed modules ran at all. test_db_rbac connects before
+    test_integration — the module whose fixture calls dbutil.apply_schema —
+    so on a fresh CI runner the test database did not exist yet and every
+    pool in it burned a 30s timeout before failing. Creating the schema here,
+    before any module runs, makes collection order irrelevant.
+
+    The failure path is deliberate: if there is no reachable Postgres (or no
+    superuser password), the DB-backed modules still skip via their own
+    table-existence checks, exactly as they did before this fixture existed.
+    """
+    try:
+        from dbutil import apply_schema
+        apply_schema()
+    except Exception:
+        pass
+    yield
