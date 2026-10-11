@@ -6,9 +6,19 @@
 --   CAPABILITY  (read or write?)   -> GRANTs on two DATA roles below
 --   VISIBILITY  (whose rows?)      -> RLS policies keyed on app.sub
 --
--- Run as:  psql -U postgres -d agent_auth -f aguard/db/schema.sql
+-- Run as:  psql -U postgres -d <database> -f aguard/db/schema.sql
+--          (database-level grants below use :dbname, defaulting to agent_auth;
+--           tests pass -v dbname=agent_auth_test to stay off the live DB)
 -- Idempotent: safe to re-run (CREATE IF NOT EXISTS / DROP IF EXISTS).
 -- =====================================================================
+
+-- Default the database name so the file keeps working when invoked without
+-- -v (the historical one-database setup). Tests override it to point the
+-- schema at a dedicated throwaway database instead of a deployment's.
+\if :{?dbname}
+\else
+\set dbname 'agent_auth'
+\endif
 
 -- -- -- 0. clean slate for re-runs (objects only; roles persist) ---------
 DROP TABLE IF EXISTS rate_limit_buckets;
@@ -256,5 +266,5 @@ ALTER ROLE agent_readonly NOLOGIN NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASS
 ALTER ROLE app_user NOLOGIN NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 -- Temp tables are a DATABASE privilege, not a role attribute: PUBLIC holds
 -- TEMPORARY by default, which lets any role fill the disk. Revoke per role.
-REVOKE TEMPORARY ON DATABASE agent_auth FROM agent_readonly, PUBLIC;
-GRANT TEMPORARY ON DATABASE agent_auth TO app_user;
+REVOKE TEMPORARY ON DATABASE :"dbname" FROM agent_readonly, PUBLIC;
+GRANT TEMPORARY ON DATABASE :"dbname" TO app_user;

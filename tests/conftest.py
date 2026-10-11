@@ -53,5 +53,30 @@ for _name, _value in {
     "MCP_RESOURCE_ID": "http://localhost:8081/mcp",
     "ALLOWED_RESOURCES": ("http://localhost:8081/mcp,"
                           "http://localhost:8080/api"),
+    # Test-database isolation. pytest applies schema.sql, which DROPs every
+    # table it defines — pointing that at a deployment database destroys it
+    # (this exact accident wiped the production box's documents mid-session).
+    # So the suite defaults to a DEDICATED throwaway database: the schema-
+    # applying modules create it (tests/dbutil.py) and every DB-touching test
+    # reads its DSNs from here, so nothing in a run can touch the live data.
+    # Set PG_TEST_DATABASE=agent_auth to restore the old shared-DB behaviour,
+    # or point DB_DSN_* explicitly if you have your own arrangement.
+    "PG_TEST_DATABASE": "agent_auth_test",
 }.items():
     os.environ.setdefault(_name, _value)
+
+# Derive the pool DSNs from the test-database choice BEFORE aguard.settings is
+# imported (its frozen Settings reads these). Only the DEFAULTS are rewritten:
+# an explicitly set DB_DSN_* is an operator's own arrangement and wins, which
+# is exactly what setdefault semantics give us here.
+_test_db = os.environ["PG_TEST_DATABASE"]
+for _name, _default in (
+    ("DB_DSN_HUMAN",
+     "postgresql://app_login_human:human-pool-secret-dev@localhost:5432/agent_auth"),
+    ("DB_DSN_AGENT",
+     "postgresql://app_login_agent:agent-pool-secret-dev@localhost:5432/agent_auth"),
+    ("DB_DSN_AUTH",
+     "postgresql://app_login_auth:auth-pool-secret-dev@localhost:5432/agent_auth"),
+):
+    os.environ.setdefault(
+        _name, _default.replace("/agent_auth", f"/{_test_db}"))

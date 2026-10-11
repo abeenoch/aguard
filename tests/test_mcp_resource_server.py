@@ -22,8 +22,6 @@ from __future__ import annotations
 import base64
 import importlib
 import json
-import os
-import subprocess
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -49,20 +47,7 @@ _parsed = urlparse(MCP_RESOURCE)
 MCP_PRM_URL = (f"{_parsed.scheme}://{_parsed.netloc}"
                f"/.well-known/oauth-protected-resource{_parsed.path}")
 
-
-def _apply_schema() -> None:
-    if not settings.pg_superuser_password:
-        raise RuntimeError(
-            "PG_SUPERUSER_PASSWORD not set — copy .env.example to .env "
-            "and fill in the superuser password (tests apply schema.sql as "
-            "the superuser; application code never does)."
-        )
-    env = dict(os.environ, PGPASSWORD=settings.pg_superuser_password)
-    subprocess.run(
-        ["psql", "-U", "postgres", "-h", "localhost", "-d", "agent_auth",
-         "-v", "ON_ERROR_STOP=0", "-q", "-f", str(SCHEMA)],
-        check=False, env=env, capture_output=True,
-    )
+from dbutil import apply_schema as _apply_schema  # noqa: E402  (throwaway test DB)
 
 
 class _McpEnv:
