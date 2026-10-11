@@ -242,6 +242,14 @@ tables are. A-guard is the guard, not the house: your data stays in your
 database under your control, and a-guard supplies the identity layer and the
 database-side enforcement that survives prompt injection.
 
+**On the hosted service instead?** You get everything above except the "your
+database" part: your account is a private, DB-enforced workspace — RLS means
+agents only ever see *your* rows, the grants make that read-only at the
+database level, every read lands in the redacted audit trail, and you create
+your documents through the API. Self-hosting doesn't unlock features; it swaps
+whose tables the tools read. The enforcement machinery is identical either
+way, because it's the same code.
+
 ## Deploy (systemd + a TLS reverse proxy)
 
 The files that run a-guard on a server live in this repo:
