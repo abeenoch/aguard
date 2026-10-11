@@ -51,7 +51,8 @@ and capped at 10,000 characters — knobs in `.env.example`
 (`RATE_LIMIT_REDACT`, `REDACT_ENDPOINT_MAX_CHARS`).
 
 <p align="center">
-  <video src="assets/aguard-demo.mp4" width="720" controls muted playsinline></video>
+  <a href="assets/aguard-demo.mp4"><img src="assets/aguard-demo.gif" alt="a-guard playground demo" width="720"></a>
+  <br><sub>30-second demo — click for the full-quality video</sub>
 </p>
 
 Prefer it inside an agent? Add the hosted tool to any MCP host — Cline runs the
