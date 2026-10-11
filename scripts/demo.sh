@@ -12,13 +12,21 @@
 #   DEMO_KEEP=1 scripts/demo.sh         # leave the services running afterwards
 #   DEMO_PAUSE=1.2 scripts/demo.sh      # pause between beats (nice for recording)
 #
-# Env overrides (defaults match .env and docker-compose.yml):
-#   AGUARD_BASE=http://localhost:8080
-#   MCP_RESOURCE_URL=http://localhost:8081
-#   MCP_RESOURCE_ID=http://localhost:8081/mcp
+# Env overrides (defaults are a plain local checkout; .env is not required):
+#   AGUARD_BASE=http://localhost:8080      # AS issuer AND port
+#   MCP_RESOURCE_URL=http://localhost:8081 # MCP server origin AND port
+#   DEMO_HOST=127.0.0.1                    # bind address for those services
 #
-# Assumes host[:port] URLs (as .env uses). If the database is not initialised,
-# the readiness step will tell you to run `scripts/agctl.py init`.
+# The demo is SELF-CONTAINED: it pins the identity (issuer + resource id) of the
+# services it starts to AGUARD_BASE / MCP_RESOURCE_URL and points the smoke client
+# at the same endpoints, so a .env aimed at a public deployment (behind nginx/TLS)
+# does not break a local run. .env is never modified — a real environment variable
+# simply wins over it (see aguard/settings.py), and only the child processes this
+# script spawns see these. Point AGUARD_BASE / MCP_RESOURCE_URL at other ports to
+# run the demo while a deployment already owns 8080/8081.
+#
+# Assumes host[:port] URLs. If the database is not initialised, the readiness
+# step will tell you to run `scripts/agctl.py init`.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,6 +102,20 @@ export RATE_LIMIT_BACKEND="${DEMO_RATE_LIMIT_BACKEND:-memory}"
 export RATE_LIMIT_TOKEN="${DEMO_RATE_LIMIT_TOKEN:-1000}"
 export RATE_LIMIT_LOGIN="${DEMO_RATE_LIMIT_LOGIN:-1000}"
 export RATE_LIMIT_LOGIN_ACCOUNT="${DEMO_RATE_LIMIT_LOGIN_ACCOUNT:-1000}"
+# Self-contained identity for the services THIS script starts and for the smoke
+# client it runs. `.env` may point at a public deployment (e.g. the production
+# issuer behind nginx); the loopback smoke client cannot TLS-verify such an
+# origin, so the demo pins AGUARD_BASE / MCP_RESOURCE_URL as the identity too.
+# Real environment wins over .env (aguard/settings.py), so these reach only the
+# child processes below — .env itself is never written.
+export OIDC_ISSUER="$AS_BASE"
+export MCP_RESOURCE_URL="$MCP_BASE"
+export MCP_RESOURCE_ID="$MCP_ID"
+export ALLOWED_RESOURCES="${MCP_ID},${AS_BASE}"
+export JWKS_URI="${AS_BASE}/jwks"      # the split RS fetches the AS's JWKS here
+# CONNECT addresses for the smoke client (IDENTITY still comes from settings).
+export AGUARD_BASE="$AS_BASE"
+export MCP_CONNECT_URL="$MCP_ID"
 # Bind address for services THIS script starts. Loopback is fine for on-host
 # recording; use DEMO_HOST=0.0.0.0 to expose them (then set the issuer to this
 # host's address and MCP_ALLOWED_HOSTS accordingly — see .env).
