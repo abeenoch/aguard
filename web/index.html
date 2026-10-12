@@ -20,7 +20,7 @@
     }
     *{box-sizing:border-box}
     html,body{margin:0;padding:0}
-    html{scroll-behavior:smooth}
+    html{scroll-behavior:smooth;scroll-padding-top:72px}
     body{
       background:
         radial-gradient(1100px 600px at 80% -12%, rgba(245,197,66,.05), transparent 60%),
@@ -106,7 +106,7 @@
     .feat h3{font-size:1.12rem;margin:0 0 10px}
     .feat p{color:var(--muted);font-size:.95rem;margin:0}
     .feat p b{color:var(--ink)}
-    code{font-family:var(--mono);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);padding:2px 7px;border-radius:6px;font-size:.86em;color:var(--ink)}
+    code{font-family:var(--mono);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);padding:2px 7px;border-radius:6px;font-size:.86em;color:var(--ink);overflow-wrap:anywhere}
     .cmd{display:block;font-family:var(--mono);font-size:.95rem;color:var(--gold);background:var(--screen);border:1px solid rgba(245,197,66,.25);border-radius:10px;padding:16px 18px;margin:0 0 12px;overflow-x:auto;white-space:pre}
     .cmd .cmt{color:var(--faint)}
 
@@ -137,6 +137,25 @@
       .wrap{padding:0 20px}
       .grid,#demo .grid,.playgrid{grid-template-columns:1fr}
       .journal{min-height:280px;font-size:.74rem;padding:14px}
+      section:not(.hero){padding:64px 0}
+      .hero{padding:64px 0 52px}
+    }
+    @media (max-width:640px){
+      /* >=16px stops iOS Safari zoom-on-focus */
+      .panel textarea{font-size:16px}
+    }
+    @media (max-width:480px){
+      .wrap{padding:0 16px}
+      .site-header .wrap{height:56px}
+      .hero{padding:48px 0 40px}
+      section:not(.hero){padding:52px 0}
+      .journal{min-height:240px;max-height:300px;font-size:.7rem;line-height:1.75;padding:12px 14px}
+      .frame-bar{padding:8px 12px;gap:10px}
+      .feat,.panel{padding:18px}
+      .cmd{font-size:.85rem;padding:13px 14px}
+      .lede{font-size:1.03rem}
+      .play-actions{flex-wrap:wrap}
+      .section-head{margin-bottom:30px}
     }
     @media (prefers-reduced-motion: reduce){
       body::after{animation:none}
