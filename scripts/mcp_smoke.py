@@ -8,6 +8,7 @@ This is the end-to-end proof, using the same client library MCP hosts
   3. agent delete     -> REFUSED by Postgres (not by application code)
   4. human delete     -> allowed for its OWN row
   5. audience binding -> a token minted for /api is rejected at /mcp
+  6. redact_text      -> the library engine over MCP; raw values never return
 
 Run BOTH services first:
     uvicorn aguard.main:app --port 8080            # authorization server
@@ -23,6 +24,7 @@ import json
 import os
 import secrets
 import sys
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
@@ -82,9 +84,21 @@ def get_tokens(client: httpx.Client, *, client_id: str, secret: str | None,
         params["resource"] = resource
     r = client.get(f"{BASE}/authorize", params=params, follow_redirects=False)
     if r.status_code == 302 and "/login" in r.headers.get("location", ""):
-        client.post(f"{BASE}/login",
-                    data={"email": email, "password": password, "next": "/"},
-                    follow_redirects=False)
+        login = client.post(f"{BASE}/login",
+                            data={"email": email, "password": password,
+                                  "next": "/"}, follow_redirects=False)
+        # The AS rate-limits logins per account (a real back-to-back smoke
+        # run trips it); honor Retry-After instead of failing confusingly
+        # one step later at consent.
+        for _ in range(3):
+            if login.status_code != 429:
+                break
+            time.sleep(float(login.headers.get("retry-after", "15")) + 1)
+            login = client.post(f"{BASE}/login",
+                                data={"email": email, "password": password,
+                                      "next": "/"}, follow_redirects=False)
+        say(f"login {email}", login.status_code in (200, 303),
+            f"status {login.status_code}")
         r = client.get(f"{BASE}/authorize", params=params, follow_redirects=False)
     data = {"decision": "approve", "client_id": client_id,
             "redirect_uri": REDIRECT, "scope": scope, "state": "st-live",
@@ -92,6 +106,8 @@ def get_tokens(client: httpx.Client, *, client_id: str, secret: str | None,
     if resource:
         data["resource"] = resource
     r = client.post(f"{BASE}/consent", data=data, follow_redirects=False)
+    if r.status_code != 302 or "location" not in r.headers:
+        say("consent approve", False, f"status {r.status_code}")
     code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
     payload = {"grant_type": "authorization_code", "code": code,
                "redirect_uri": REDIRECT, "code_verifier": verifier}
@@ -175,8 +191,17 @@ async def run() -> None:
             tools = await s.list_tools()
             names = {t.name for t in tools.tools}
             say("tools/list over the MCP SDK",
-                names == {"list_documents", "read_document", "delete_document"},
+                names == {"list_documents", "read_document", "delete_document",
+                          "redact_text"},
                 ", ".join(sorted(names)))
+            scrubbed = payload_of(await s.call_tool(
+                "redact_text",
+                {"text": "card 4111 1111 1111 1111, mail jane@example.com"}))
+            body = json.dumps(scrubbed)
+            say("redact_text scrubs through the SAME engine",
+                isinstance(scrubbed, dict) and "4111" not in body
+                and "jane@example.com" not in body and '"findings"' in body,
+                body[:120])
             listed = payload_of(await s.call_tool("list_documents", {}))
             say("agent sees its own tenant only (RLS)",
                 isinstance(listed, list) and listed
