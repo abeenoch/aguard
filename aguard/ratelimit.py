@@ -48,7 +48,8 @@ from typing import Protocol
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
-from aguard.oidc.pages import rate_limited_page
+from aguard.oidc.pages import html_response, rate_limited_page
+from aguard.oidc.urls import public_path_prefix
 from aguard.settings import settings
 
 log = logging.getLogger("a-guard.ratelimit")
@@ -401,10 +402,10 @@ def _too_many(retry_after: int, *, as_html: bool) -> Response:
     """
     headers = {"Retry-After": str(retry_after)}
     if as_html:
-        return Response(
-            content=rate_limited_page(retry_after=retry_after),
+        return html_response(
+            rate_limited_page(retry_after=retry_after,
+                              prefix=public_path_prefix()),
             status_code=429,
-            media_type="text/html",
             headers=headers,
         )
     return JSONResponse(

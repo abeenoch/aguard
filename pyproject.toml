@@ -29,6 +29,9 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "psycopg-pool>=3.2,<4",
     "python-multipart>=0.0.9,<1",
+    # E1: the auth pages are Jinja2 templates with autoescape on. Capped the
+    # same way as everything else we actually think about at each major.
+    "jinja2>=3.1,<4",
     "mcp>=1.19.0,<2",
 ]
 
@@ -63,6 +66,10 @@ include = ["aguard*"]
 # installed package has no source checkout to read it from. The key MUST be
 # quoted — unquoted, TOML reads `aguard.db` as a nested table.
 "aguard.db" = ["*.sql"]
+# Same story for the auth pages: Jinja2 resolves templates through the
+# installed package (PackageLoader), and the CSP links the stylesheet as a
+# first-party static file — neither exists in a source checkout.
+"aguard.oidc" = ["templates/*.html", "static/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

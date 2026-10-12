@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+{%- if error %}
+  <h1>Authorization failed</h1>
+  <p class="err">{{ error }} — {{ error_description }}</p>
+{% else %}
+  <h1>Authorization code received</h1>
+  <p class="sub">Exchange it at <span class="cli">POST /token</span> with the
+     PKCE verifier — the code alone is useless without it.</p>
+  <p class="cli">code&nbsp;= {{ code }}<br>state = {{ state }}</p>
+{% endif %}
+{%- endblock %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Too many attempts</h1>
+  <p class="sub">This address has made too many attempts. Try again in
+     <b>{{ retry_after }}</b> seconds.</p>
+  <p class="meta">The limit protects accounts from password guessing, so a
+  client that keeps retrying will keep being refused.</p>
+{%- endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Authorize application</h1>
+  <p class="who">Signed in as <b>{{ user_label }}</b></p>
+  <p class="sub">This application is requesting:</p>
+  <ul class="scopes">
+    {%- for s in scopes %}
+    <li><span class="tick">&#10003;</span>{{ s }}</li>
+    {%- else %}
+    <li><span class="tick">&#10003;</span>basic access</li>
+    {%- endfor %}
+  </ul>
+  <form method="post" action="{{ prefix }}/consent">
+    <input type="hidden" name="client_id" value="{{ client_id }}">
+    <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+    <input type="hidden" name="scope" value="{{ scope }}">
+    <input type="hidden" name="state" value="{{ state }}">
+    <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+    <input type="hidden" name="code_challenge_method"
+           value="{{ code_challenge_method }}">
+    {%- if nonce %}
+    <input type="hidden" name="nonce" value="{{ nonce }}">
+    {%- endif %}
+    {%- if resource %}
+    <input type="hidden" name="resource" value="{{ resource }}">
+    {%- endif %}
+    <div class="row">
+      <button class="btn-primary" name="decision" value="approve">Approve</button>
+      <button class="btn-ghost" name="decision" value="deny">Deny</button>
+    </div>
+  </form>
+  <p class="meta">{{ client_id }}<br>{{ redirect_uri }}</p>
+{%- endblock %}

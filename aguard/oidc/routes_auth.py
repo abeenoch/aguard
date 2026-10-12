@@ -16,14 +16,27 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    Response,
+)
 
 from aguard.oidc.clients import Client, ClientRegistry
 from aguard.oidc.codes import AuthCodeStore
-from aguard.oidc.pages import consent_form, error_page, login_form, signup_form
+from aguard.oidc.pages import (
+    callback_page,
+    consent_form,
+    error_page,
+    html_response,
+    login_form,
+    signup_form,
+)
 from aguard.oidc.session import create_session_token, parse_session_token
 from aguard.oidc.urls import public_path_prefix
 from aguard.oidc.users import (
@@ -203,8 +216,27 @@ def _fail(verr: ValidationError, *, state: str | None,
         if state:
             params["state"] = state
         return _redirect_with(redirect_uri, params)
-    return HTMLResponse(
-        error_page(title=verr.error, detail=verr.description), status_code=400
+    return html_response(
+        error_page(title=verr.error, detail=verr.description,
+                   prefix=public_path_prefix()),
+        status_code=400,
+    )
+
+
+# -- static ---------------------------------------------------------------
+
+
+@router.get("/static/aguard.css")
+def stylesheet() -> Response:
+    """The one stylesheet every rendered page links (CSP: style-src 'self').
+
+    Served by the app rather than a StaticFiles mount: a whitelist of exactly
+    one file cannot drift into serving templates or anything else that lands
+    in the package directory."""
+    return FileResponse(
+        Path(__file__).with_name("static") / "aguard.css",
+        media_type="text/css",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 
@@ -258,7 +290,7 @@ def authorize(
         )
 
     user = USERS[sub]
-    return HTMLResponse(
+    return html_response(
         consent_form(
             client_id=validated.client.client_id,
             redirect_uri=validated.redirect_uri,
@@ -279,7 +311,7 @@ def authorize(
 def login_page(next_url: str = Query("/", alias="next")) -> HTMLResponse:
     # Same `next` naming rule as POST /login: the wire parameter is `next`,
     # the Python name is not.
-    return HTMLResponse(
+    return html_response(
         login_form(next_url=_safe_next(next_url), prefix=public_path_prefix(),
                    allow_signup=settings.allow_signup,
                    demo_users=settings.seed_demo_users)
@@ -324,7 +356,7 @@ def login(
     # `user is None` can only mean ok is False, but saying both here is what
     # lets the type checker see that user.sub below is safe.
     if not ok or user is None:
-        return HTMLResponse(
+        return html_response(
             login_form(next_url=_safe_next(next_url),
                        error="Invalid email or password.",
                        prefix=public_path_prefix(),
@@ -383,7 +415,8 @@ def consent(
 
     sub = _current_sub(request)
     if sub is None or sub not in USERS:
-        return HTMLResponse("Not authenticated — sign in first.", status_code=403)
+        return html_response("Not authenticated — sign in first.",
+                             status_code=403)
 
     if decision != "approve":
         return _redirect_with(redirect_uri, {
@@ -409,12 +442,13 @@ def consent(
 @router.get("/signup", response_class=HTMLResponse)
 def signup_page(next_url: str = Query("/", alias="next")) -> Response:
     if not settings.allow_signup:
-        return HTMLResponse(
+        return html_response(
             error_page(title="Registration closed",
                        detail="This deployment does not accept self-service "
-                              "sign-ups."),
+                              "sign-ups.",
+                       prefix=public_path_prefix()),
             status_code=404)
-    return HTMLResponse(
+    return html_response(
         signup_form(next_url=_safe_next(next_url), prefix=public_path_prefix()))
 
 
@@ -436,7 +470,7 @@ def signup(
     safe_next = _safe_next(next_url)
 
     def reject(message: str, status: int = 400) -> HTMLResponse:
-        return HTMLResponse(
+        return html_response(
             signup_form(next_url=safe_next, error=message, prefix=prefix,
                         email=email.strip(), name=name.strip()),
             status_code=status)
@@ -499,8 +533,9 @@ def demo_callback(
 ) -> HTMLResponse:
     """Registered redirect URI — renders what the client received so the
     whole flow is inspectable in a browser."""
-    from aguard.oidc.pages import callback_page
-    return HTMLResponse(callback_page(
-        code=code, state=state, error=error, error_description=error_description
+    return html_response(callback_page(
+        code=code, state=state, error=error,
+        error_description=error_description,
+        prefix=public_path_prefix(),
     ))
 
