@@ -201,6 +201,25 @@ what it started. Recording? The storyboard, narration and export commands are in
 The app prints `INSECURE DEV SECRETS ACTIVE` at startup until you override
 `SESSION_SECRET` and `LOG_HASH_PEPPER` — that warning is intentional.
 
+### Seeded clients live in the database
+
+The four lab clients (`demo-spa`, `demo-conf`, `cli-agent`, `chat-agent`) are
+seeded at boot, not held as code constants: with `STORE_BACKEND=postgres`
+they land in the `clients` table, and from the first seed onward the stored
+row wins — the database is the source of truth for the credential. The env
+vars (`CLI_AGENT_SECRET` etc.) only bootstrap the FIRST seed; after that a
+secret change in the environment is ignored, by design. Rotate without a
+redeploy:
+
+```bash
+python scripts/agctl.py clients list                 # secrets stay hashed
+python scripts/agctl.py clients rotate cli-agent     # prints the new secret ONCE
+```
+
+Rotation updates the database; the running AS keeps its in-memory registry
+until restart, which the command says out loud. Public clients (no secret —
+PKCE is their only shield) refuse rotation.
+
 ### Anyone can sign up
 
 Accounts are not hardcoded. `/signup` creates one (name, email, password —
@@ -479,6 +498,10 @@ python scripts/agctl.py redact --json -     # structural walk, from stdin
 python scripts/agctl.py audit --limit 20
 python scripts/agctl.py audit --denied      # only refusals / no-ops
 python scripts/agctl.py export --format csv --out audit.csv
+
+# seeded clients — list them, or rotate a secret without a redeploy
+python scripts/agctl.py clients list
+python scripts/agctl.py clients rotate cli-agent
 ```
 
 A row where an agent was refused and a human allowed the same operation, from

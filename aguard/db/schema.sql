@@ -23,6 +23,7 @@
 -- -- -- 0. clean slate for re-runs (objects only; roles persist) ---------
 DROP TABLE IF EXISTS rate_limit_buckets;
 DROP TABLE IF EXISTS dynamic_clients;
+DROP TABLE IF EXISTS clients;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS agent_audit;
 DROP TABLE IF EXISTS refresh_tokens;
@@ -192,6 +193,24 @@ CREATE TABLE dynamic_clients (
 );
 CREATE INDEX dynamic_clients_created_idx ON dynamic_clients (created_at);
 
+-- Seeded OAuth clients — the fixtures seed_registry() installs at boot
+-- (demo-spa, demo-conf, cli-agent, chat-agent). AS state like the token
+-- tables: the AS owns it and tenants get no grants. E2 moved these out of
+-- Python constants so a secret can be ROTATED WITHOUT A REDEPLOY
+-- (`agctl clients rotate`). The first boot INSERTs the env-derived default;
+-- from then on the stored row WINS (ON CONFLICT DO NOTHING) — so a rotated
+-- secret survives restarts, and changing the env var alone does nothing.
+CREATE TABLE clients (
+  client_id          text PRIMARY KEY,
+  client_secret_hash text,             -- NULL = public client (PKCE is its shield)
+  redirect_uris      text[] NOT NULL,
+  allowed_scopes     text[] NOT NULL,
+  grant_types        text[] NOT NULL,
+  auth_method        text NOT NULL,
+  kind               text NOT NULL,    -- "human" | "agent"
+  created_at         bigint NOT NULL
+);
+
 -- Local accounts (the directory /login and /signup read). The AS owns
 -- authentication, so this is auth_service state, NOT tenant data: tenants never
 -- read or write it, and the AS cannot reach their documents. `email` is PII (the
@@ -251,11 +270,11 @@ GRANT USAGE, SELECT ON SEQUENCE agent_audit_id_seq TO app_user, agent_readonly;
 
 -- AS state: auth_service owns the token tables and NOTHING else.
 -- The tenant roles get no access to tokens; the AS gets no tenant data.
-GRANT SELECT, INSERT, UPDATE, DELETE ON auth_codes, refresh_tokens, dynamic_clients TO auth_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth_codes, refresh_tokens, dynamic_clients, clients TO auth_service;
 GRANT SELECT, INSERT, UPDATE, DELETE ON users TO auth_service;
 GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limit_buckets TO auth_service;
 REVOKE ALL ON documents, agent_documents, agent_audit FROM auth_service;
-REVOKE ALL ON auth_codes, refresh_tokens, dynamic_clients, users FROM app_user, agent_readonly;
+REVOKE ALL ON auth_codes, refresh_tokens, dynamic_clients, clients, users FROM app_user, agent_readonly;
 -- Rate counters are AS state too. Denied to tenants explicitly (not merely
 -- "never granted"): a tenant that can write this table can clear its own
 -- throttle, which is the entire control evaporating.

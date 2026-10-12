@@ -14,6 +14,8 @@ Everything an operator needs is already reachable from the command line:
   agctl verify                               built-in redaction self-check
   agctl audit  [--sub S] [--denied] [--json] the audit trail, newest first
   agctl export [--format jsonl|csv]          dump the trail for shipping
+  agctl clients list                         seeded clients (secrets stay hashed)
+  agctl clients rotate <client_id>           mint a new secret, printed once
 
 Stdlib only (argparse, no new dependency) — matches the project's "boring
 stack" principle. The redaction commands need no database; the audit commands
@@ -35,7 +37,8 @@ import sys
 from pathlib import Path
 
 from aguard.db import __file__ as _db_package_file
-from aguard.db.session import scoped_session
+from aguard.db.session import scoped_session, service_session
+from aguard.oidc.clients import hash_secret
 from aguard.redact.patterns import correlate, redact_text
 from aguard.redact.redactor import redact_event
 from aguard.settings import settings
@@ -230,6 +233,97 @@ def cmd_export(args: argparse.Namespace) -> int:
     if args.out:
         print(f"wrote {len(records)} row(s) to {args.out}", file=sys.stderr)
     return 0
+
+
+# --------------------------------- clients ---------------------------------
+
+
+def _fetch_clients() -> list[tuple]:
+    """The seeded client rows, read through the AS's own session layer.
+
+    The `clients` table is AS state: granted to auth_service — the session
+    the registries themselves use — and to no tenant role. The CLI reads it
+    the same way the API does, through the least-privilege layer; no side
+    door, no superuser. Secrets leave the table only as hashes.
+    """
+    with service_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT client_id, kind, auth_method,"
+                " client_secret_hash IS NOT NULL, allowed_scopes, grant_types,"
+                " redirect_uris, created_at"
+                " FROM clients ORDER BY created_at, client_id")
+            return cur.fetchall()
+
+
+def cmd_clients_list(args: argparse.Namespace) -> int:
+    rows = _fetch_clients()
+    if args.json:
+        records = [{"client_id": r[0], "kind": r[1], "auth_method": r[2],
+                    "confidential": r[3], "allowed_scopes": r[4],
+                    "grant_types": r[5], "redirect_uris": r[6],
+                    "created_at": r[7]}
+                   for r in rows]
+        print(json.dumps(records, indent=2))
+        return 0
+    if not rows:
+        print("(no seeded clients — STORE_BACKEND=memory, or schema not applied)")
+        return 0
+    print(f"{'client_id':<12}  {'kind':<6}  {'secret':<13}  "
+          f"{'auth_method':<20}  {'redirects':>9}")
+    for r in rows:
+        print(f"{r[0]:<12}  {r[1]:<6}  "
+              f"{'hashed' if r[3] else 'none (public)':<13}  {r[2]:<20}  "
+              f"{len(r[6]):>9}")
+        print(f"    scopes:  {', '.join(sorted(r[4]))}")
+        print(f"    grants:  {', '.join(sorted(r[5]))}")
+    print("\nSecrets are stored hashed and are never displayed. Rotate one:\n"
+          "  agctl clients rotate <client_id>")
+    return 0
+
+
+def cmd_clients_rotate(args: argparse.Namespace) -> int:
+    """Mint a new secret for a seeded confidential client.
+
+    The raw secret goes to stdout EXACTLY ONCE and is never logged — the
+    table keeps only its hash (clients.hash_secret). The running AS holds
+    its registry in memory, so it keeps accepting the OLD secret until it
+    restarts; the command says so out loud.
+    """
+    new_secret = secrets.token_urlsafe(32)
+    with service_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE clients SET client_secret_hash = %s"
+                " WHERE client_id = %s AND client_secret_hash IS NOT NULL"
+                " RETURNING client_id",
+                (hash_secret(new_secret), args.client_id))
+            rotated = cur.fetchone() is not None
+    if not rotated:
+        return _explain_refused_rotation(args.client_id)
+    print(f"new client secret for {args.client_id}"
+          " (shown ONCE — store it now; the table keeps only the hash):")
+    print(new_secret)
+    print("\nThe database row is updated. The running AS holds the old secret\n"
+          "in memory until it restarts:\n"
+          "  sudo systemctl restart aguard-as")
+    return 0
+
+
+def _explain_refused_rotation(client_id: str) -> int:
+    """Say WHY a rotation refused: unknown id vs public client."""
+    with service_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM clients WHERE client_id = %s",
+                        (client_id,))
+            known = cur.fetchone() is not None
+    if known:
+        print(f"{client_id} is a PUBLIC client (no secret): PKCE is its only\n"
+              "shield, so there is nothing to rotate.", file=sys.stderr)
+    else:
+        print(f"no such seeded client: {client_id} — see: agctl clients list",
+              file=sys.stderr)
+    return 2
 
 
 # ----------------------------------- init ----------------------------------
@@ -452,6 +546,18 @@ def build_parser() -> argparse.ArgumentParser:
     exp.add_argument("--sub", help="filter by subject")
     exp.add_argument("--denied", action="store_true")
     exp.set_defaults(func=cmd_export)
+
+    cl = sub.add_parser("clients",
+                        help="seeded clients: list, or rotate a secret")
+    cl_sub = cl.add_subparsers(dest="clients_command", required=True)
+    cl_list = cl_sub.add_parser("list",
+                                help="seeded clients (secrets stay hashed)")
+    cl_list.add_argument("--json", action="store_true", help="emit JSON")
+    cl_list.set_defaults(func=cmd_clients_list)
+    cl_rot = cl_sub.add_parser("rotate",
+                               help="mint a new secret; prints it exactly once")
+    cl_rot.add_argument("client_id")
+    cl_rot.set_defaults(func=cmd_clients_rotate)
 
     ini = sub.add_parser("init",
                          help="bootstrap: .env + database + schema + self-check")

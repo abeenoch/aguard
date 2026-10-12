@@ -167,13 +167,21 @@ class ClientRegistry:
 class PostgresClientRegistry(ClientRegistry):
     """ClientRegistry backed by Postgres, so a restart KEEPS its clients.
 
-    A dynamic registration is state a THIRD PARTY depends on: an MCP host
-    registers once (RFC 7591) and caches the client_id, then presents it on every
-    later /authorize and /token call. Held in process memory only, every restart
-    — and therefore every deploy — silently invalidates every such client, and
-    the host shows `invalid_client` for a registration it has no reason to think
-    is gone. Seeded clients stay in code (seed_registry); only dynamic ones live
-    in the table.
+    Two kinds of client state live here, for the same reason:
+
+    - dynamic registrations (RFC 7591): state a THIRD PARTY depends on — an
+      MCP host registers once and caches the client_id, then presents it on
+      every later /authorize and /token call. Held in process memory only,
+      every restart — and therefore every deploy — silently invalidates every
+      such client, and the host shows `invalid_client` for a registration it
+      has no reason to think is gone. These live in `dynamic_clients`.
+
+    - seeded fixtures (E2): demo-spa / demo-conf / cli-agent / chat-agent are
+      INSERTed into `clients` on first boot and re-read from there on every
+      boot after. From the first seed onward the STORED ROW WINS over the
+      env-derived default, which is what makes `agctl clients rotate`
+      durable: a rotated secret survives restarts, and changing the env var
+      alone does nothing. Rotate via the CLI, not the environment.
     """
 
     def __init__(self) -> None:
@@ -181,6 +189,32 @@ class PostgresClientRegistry(ClientRegistry):
         self._load()
 
     def _load(self) -> None:
+        self._load_seeded()
+        self._load_dynamic()
+
+    def _load_seeded(self) -> None:
+        """Load the seeded fixtures from the `clients` table.
+
+        A missing table RAISES rather than degrading to the env defaults:
+        a silent fallback would authenticate against a stale credential
+        after a rotation — a security regression wearing a resilience
+        costume. Apply the schema (the one-statement migration on a live
+        deployment) BEFORE restarting the AS.
+        """
+        from aguard.db.session import service_session
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT client_id, client_secret_hash, redirect_uris,"
+                    " allowed_scopes, grant_types, auth_method, kind"
+                    " FROM clients")
+                rows = cur.fetchall()
+        for row in rows:
+            client = self._row_to_client(row)
+            self._clients[client.client_id] = client
+            self._seeded.add(client.client_id)
+
+    def _load_dynamic(self) -> None:
         from aguard.db.session import service_session
         with service_session() as conn:
             with conn.cursor() as cur:
@@ -192,14 +226,64 @@ class PostgresClientRegistry(ClientRegistry):
                 rows = cur.fetchall()
         # Replay oldest-first so _dynamic_order's eviction order matches age.
         for row in reversed(rows):
-            client = Client(
-                client_id=row[0], client_secret_hash=row[1],
-                redirect_uris=tuple(row[2]),
-                allowed_scopes=frozenset(row[3]),
-                grant_types=frozenset(row[4]),
-                auth_method=row[5], kind=row[6])
+            client = self._row_to_client(row)
             self._clients[client.client_id] = client
             self._dynamic_order[client.client_id] = None
+
+    @staticmethod
+    def _row_to_client(row) -> Client:
+        return Client(
+            client_id=row[0], client_secret_hash=row[1],
+            redirect_uris=tuple(row[2]),
+            allowed_scopes=frozenset(row[3]),
+            grant_types=frozenset(row[4]),
+            auth_method=row[5], kind=row[6])
+
+    def seed(self, client: Client) -> None:
+        """Idempotent seed (E2): first boot INSERTs, later boots keep the row.
+
+        Unlike the in-memory seed() this does NOT raise on a duplicate, on
+        purpose: seed_registry() runs at every boot with the env-derived
+        default, and the database — not the environment — owns the
+        credential from the first seed onward.
+        """
+        with self._lock:
+            if client.client_id in self._clients:
+                return              # loaded from the DB — the stored row wins
+        stored = self._insert_if_absent(client)
+        with self._lock:
+            self._clients[stored.client_id] = stored
+            self._seeded.add(stored.client_id)
+
+    def _insert_if_absent(self, client: Client) -> Client:
+        """INSERT ... ON CONFLICT DO NOTHING, then read back the stored row.
+
+        Reading back — instead of trusting the argument — closes the
+        multi-worker race: whoever boots second must install the row the
+        first one wrote, not its own env-derived copy.
+        """
+        from aguard.db.session import service_session
+        with service_session() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO clients(client_id, client_secret_hash,"
+                    " redirect_uris, allowed_scopes, grant_types, auth_method,"
+                    " kind, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
+                    " ON CONFLICT (client_id) DO NOTHING",
+                    (client.client_id, client.client_secret_hash,
+                     list(client.redirect_uris), sorted(client.allowed_scopes),
+                     sorted(client.grant_types), client.auth_method, client.kind,
+                     int(time.time())))
+                if cur.rowcount == 1:
+                    return client   # we wrote it — argument IS the stored row
+                cur.execute(
+                    "SELECT client_id, client_secret_hash, redirect_uris,"
+                    " allowed_scopes, grant_types, auth_method, kind"
+                    " FROM clients WHERE client_id = %s", (client.client_id,))
+                row = cur.fetchone()
+        if row is None:             # pragma: no cover — a conflict implies a row
+            raise RuntimeError(f"client {client.client_id!r} vanished mid-seed")
+        return self._row_to_client(row)
 
     def _persist(self, client: Client) -> None:
         from aguard.db.session import service_session
