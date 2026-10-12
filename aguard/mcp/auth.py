@@ -60,21 +60,33 @@ class AGuardTokenVerifier(TokenVerifier):
             # forged/expired token cannot make us hammer the JWKS endpoint.
             refresh = getattr(keys, "refresh", None)
             if refresh is None:
+                logger.info({"event": "mcp.auth.reject",
+                             "reason": "unknown signing key and key set cannot refresh"})
                 return None
             try:
                 refresh()
             except Exception:  # JWKS down: fail closed below
+                logger.info({"event": "mcp.auth.reject",
+                             "reason": "JWKS refresh failed — key source unreachable"})
                 return None
             try:
                 claims = self._verify(token)
-            except Exception:  # refresh did not help: fail closed
+            except Exception as exc:  # refresh did not help: fail closed
+                logger.info({"event": "mcp.auth.reject",
+                             "reason": f"{type(exc).__name__}: {exc}"})
                 return None
         except Exception as exc:
             # Includes TokenValidationError AND a key source that cannot answer
             # (cold RemoteKeyStore with the JWKS unreachable). verify_token must
             # never raise into the SDK: an unverifiable token is simply not
             # authenticated, so fail closed and log the reason (never the token).
-            logger.debug("token verification failed: %s", exc)
+            # INFO, not DEBUG: a PRESENTED credential that fails is rare and is
+            # exactly the "why was I 401'd" question — answering it should not
+            # require nginx archaeology. Requests with no bearer token stay
+            # silent (scanner noise), so the operator's rule is: a 401 with no
+            # reject line means no token was sent; a 401 with one names the why.
+            logger.info({"event": "mcp.auth.reject",
+                         "reason": f"{type(exc).__name__}: {exc}"})
             return None
         roles = roles_from_claims(claims)
         return AccessToken(
