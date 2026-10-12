@@ -413,6 +413,44 @@ python scripts/cline_preflight.py     # expect 10/10 gates passed
 Full walkthrough, recording beats and post-run evidence:
 [docs/DEMO_CLINE.md](docs/DEMO_CLINE.md).
 
+### Use it from plain Python
+
+The MCP-host flow above needs a browser. A worker, cron job or pipeline does
+not have one — it mints its own token with the headless `client_credentials`
+grant and speaks MCP directly. The whole client, minus boilerplate:
+
+```python
+token = httpx.post(
+    "https://your-host/api/token",
+    auth=("cli-agent", "..."),                     # confidential client
+    data={"grant_type": "client_credentials",
+          "scope": "orders:read",
+          "resource": "https://your-host/mcp"},    # becomes the token's aud
+).json()["access_token"]
+
+async with streamablehttp_client(
+        "https://your-host/mcp",
+        headers={"Authorization": f"Bearer {token}"}) as (r, w, _):
+    async with ClientSession(r, w) as mcp:
+        await mcp.initialize()
+        print(await mcp.call_tool("redact_text", {"text": "..."}))
+```
+
+Full runnable version (env-var config, what the seeded `cli-agent` may and
+may not do): [`examples/call_aguard_from_python.py`](examples/call_aguard_from_python.py).
+
+Two things the snippet will not forgive:
+
+- **`resource` is not decoration.** It becomes the token's `aud`; a token
+  minted for any other resource is refused at `/mcp` with 401 —
+  indistinguishable from sending no token at all. That is audience binding
+  doing its job: a credential for one service cannot be replayed at another.
+- **Agents hold read scopes only.** An agent client may mint `orders:read`
+  tokens and call `redact_text`, but destructive tools stay human-only and
+  writes are refused by Postgres before application code runs — the same
+  guarantee [`scripts/mcp_smoke.py`](scripts/mcp_smoke.py) proves live.
+
+
 ### Prove it
 
 ```bash
