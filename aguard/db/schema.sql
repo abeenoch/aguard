@@ -117,8 +117,21 @@ CREATE TABLE agent_audit (
   client_id     text NOT NULL,
   request_id    text NOT NULL,
   statement     text NOT NULL,        -- redacted before insert
-  rows_returned integer NOT NULL DEFAULT 0
+  rows_returned integer NOT NULL DEFAULT 0,
+  resource_id   text NOT NULL DEFAULT ''  -- namespaced resource, e.g. documents:7
 );
+
+-- Monitor a single resource across all principals, time-ordered.
+CREATE INDEX agent_audit_resource_ts_idx ON agent_audit (resource_id, ts DESC);
+
+-- Monitor every access to a resource *type* (e.g. all "documents", both the
+-- collection-level "documents" and per-row "documents:7"), time-ordered.
+CREATE INDEX agent_audit_resource_type_ts_idx
+  ON agent_audit (split_part(resource_id, ':', 1), ts DESC);
+
+-- Existing deployments: ALTER TABLE agent_audit ADD COLUMN resource_id
+--   text NOT NULL DEFAULT ''; then backfill resource ids from statement text
+--   where meaningful, and re-run this schema file (idempotent).
 
 -- -- -- 4b. authorization-server state ---------------------------------------
 -- Token bookkeeping. NOT tenant data: it is the AS's own operational state,

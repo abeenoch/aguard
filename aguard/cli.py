@@ -48,7 +48,7 @@ from aguard.settings import settings
 SCHEMA_PATH = Path(_db_package_file).resolve().parent / "schema.sql"
 
 AUDIT_COLUMNS = ("id", "ts", "subject", "client_id", "request_id",
-                 "statement", "rows_returned")
+                 "statement", "rows_returned", "resource_id")
 
 
 # --------------------------------- redact ---------------------------------
@@ -143,12 +143,14 @@ def cmd_verify(_: argparse.Namespace) -> int:
 
 
 def _fetch_audit(*, limit: int, sub: str | None = None,
-                 denied: bool = False) -> list[tuple]:
+                 denied: bool = False, resource: str | None = None,
+                 resource_prefix: str | None = None
+                 ) -> list[tuple]:
     """Read the audit trail through the SAME least-privilege layer the API
     uses. agent_audit carries no RLS (it is the cross-actor record), and the
     human data role already holds SELECT on it."""
     sql = ("SELECT id, ts, subject, client_id, request_id, statement, "
-           "rows_returned FROM agent_audit")
+           "rows_returned, resource_id FROM agent_audit")
     where: list[str] = []
     params: list[object] = []
     if sub:
@@ -158,6 +160,15 @@ def _fetch_audit(*, limit: int, sub: str | None = None,
         # rows_returned = 0 means the operation touched nothing: a refusal
         # (e.g. the agent delete Postgres rejected) or a genuinely empty read.
         where.append("rows_returned = 0")
+    if resource is not None:
+        where.append("resource_id = %s")
+        params.append(resource)
+    if resource_prefix is not None:
+        # split_part(resource_id, ':', 1) = 'documents' matches both the
+        # collection-level "documents" (list/create) and per-row "documents:7"
+        # (read/delete), so a monitor can pull every access to a resource type.
+        where.append("split_part(resource_id, ':', 1) = %s")
+        params.append(resource_prefix)
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY id DESC LIMIT %s"
@@ -188,7 +199,10 @@ def _scalar(cur):
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
-    rows = _fetch_audit(limit=args.limit, sub=args.sub, denied=args.denied)
+    rows = _fetch_audit(limit=args.limit, sub=args.sub,
+                        resource=args.resource,
+                        resource_prefix=args.resource_prefix,
+                        denied=args.denied)
     if args.json:
         print(json.dumps(_as_dicts(rows), default=str, indent=2))
         return 0
@@ -198,16 +212,20 @@ def cmd_audit(args: argparse.Namespace) -> int:
     print(f"{'id':>5}  {'ts':<20}  {'subject':<12}  {'client':<11}  "
           f"{'rows':>4}  statement")
     for row in rows:
-        rid, ts, subject, client_id, _request_id, statement, affected = row
+        rid, ts, subject, client_id, _request_id, statement, affected, _resource_id = row
         print(f"{rid:>5}  {str(ts)[:19]:<20}  {subject[:12]:<12}  "
-              f"{client_id[:11]:<11}  {affected:>4}  {statement}")
+              f"{client_id[:11]:<11}  {affected:>4}  {statement}  "
+              f"[{_resource_id}]")
     print(f"\n{len(rows)} row(s). rows=0 means the operation changed nothing "
           f"(refusal or empty read).")
     return 0
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    rows = _fetch_audit(limit=args.limit, sub=args.sub, denied=args.denied)
+    rows = _fetch_audit(limit=args.limit, sub=args.sub,
+                        resource=args.resource,
+                        resource_prefix=args.resource_prefix,
+                        denied=args.denied)
     records = _as_dicts(rows)
     handle = None
     out = sys.stdout
@@ -534,6 +552,8 @@ def build_parser() -> argparse.ArgumentParser:
     aud = sub.add_parser("audit", help="show the audit trail, newest first")
     aud.add_argument("--limit", type=int, default=25)
     aud.add_argument("--sub", help="filter by subject")
+    aud.add_argument("--resource", help="filter by exact resource_id (e.g. documents:7)")
+    aud.add_argument("--resource-prefix", help="filter by resource type, e.g. documents (matches documents and documents:7)")
     aud.add_argument("--denied", action="store_true",
                      help="only rows where the operation changed 0 rows")
     aud.add_argument("--json", action="store_true", help="emit JSON")
@@ -544,6 +564,8 @@ def build_parser() -> argparse.ArgumentParser:
     exp.add_argument("--out", help="output file (default: stdout)")
     exp.add_argument("--limit", type=int, default=1000)
     exp.add_argument("--sub", help="filter by subject")
+    exp.add_argument("--resource", help="filter by exact resource_id (e.g. documents:7)")
+    exp.add_argument("--resource-prefix", help="filter by resource type, e.g. documents (matches documents and documents:7)")
     exp.add_argument("--denied", action="store_true")
     exp.set_defaults(func=cmd_export)
 

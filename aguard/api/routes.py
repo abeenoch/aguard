@@ -66,7 +66,7 @@ def list_documents(request: Request,
             rows = cur.fetchall()
             _audit(cur, principal, rid,
                    "SELECT id, owner_sub, title, body FROM agent_documents",
-                   len(rows))
+                   len(rows), "documents")
     return {"documents": [
         {"id": r[0], "owner_sub": r[1], "title": r[2], "body": r[3]}
         for r in rows]}
@@ -93,7 +93,7 @@ def create_document(payload: DocumentIn, request: Request,
             new_id = cur.fetchone()[0]
             _audit(cur, principal, rid,
                    "INSERT INTO documents(owner_sub, title, body) VALUES (...)",
-                   1)
+                   1, "documents")
     return {"id": new_id, "owner_sub": principal.sub}
 
 
@@ -105,7 +105,8 @@ def whoami(principal: Principal = Depends(require_principal)):
 
 
 def _audit(cur, principal: Principal, request_id: str,
-           statement: str, rows_returned: int) -> None:
+           statement: str, rows_returned: int,
+           resource_id: str = "") -> None:
     """Audit rows are log records too — statement text passes through the
     SAME redactor so a WHERE email='...' can never land raw in agent_audit."""
     from aguard.redact.redactor import redact_event
@@ -113,6 +114,6 @@ def _audit(cur, principal: Principal, request_id: str,
     clean = redact_event({"statement": statement}, settings.log_pepper)
     cur.execute(
         "INSERT INTO agent_audit(subject, client_id, request_id, statement,"
-        " rows_returned) VALUES (%s, %s, %s, %s, %s)",
+        " rows_returned, resource_id) VALUES (%s, %s, %s, %s, %s, %s)",
         (principal.sub, principal.client_id, request_id,
-         str(clean["statement"]), rows_returned))
+         str(clean["statement"]), rows_returned, resource_id))

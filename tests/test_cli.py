@@ -85,11 +85,45 @@ def test_fetch_audit_reads_rows_newest_first():
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO agent_audit(subject, client_id, request_id,"
-                " statement, rows_returned) VALUES (%s,%s,%s,%s,%s)",
-                ("usr_agctl_test", "cli-test", "rid-1", "selftest op", 0))
+                " statement, rows_returned, resource_id) VALUES (%s,%s,%s,%s,%s,%s)",
+                ("usr_agctl_test", "cli-test", "rid-1", "selftest op", 0,
+                 "documents:7"))
     rows = agctl._fetch_audit(limit=5, sub="usr_agctl_test")
     assert rows and rows[0][2] == "usr_agctl_test"
     assert rows[0][6] == 0                       # rows_returned
+    assert rows[0][7] == "documents:7"           # resource_id
+
+
+def test_fetch_audit_filters_by_resource_id():
+    rows = agctl._fetch_audit(limit=5, resource="documents:7")
+    assert rows and all(r[7] == "documents:7" for r in rows)
+    other = agctl._fetch_audit(limit=5, resource="documents:9")
+    assert other == []
+
+
+def test_fetch_audit_filters_by_resource_prefix():
+    # seed a collection-level row (plain "documents") and a per-row row
+    with scoped_session(kind="human", sub="usr_agctl_prefix") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO agent_audit(subject, client_id, request_id,"
+                " statement, rows_returned, resource_id) VALUES (%s,%s,%s,%s,%s,%s)",
+                ("usr_agctl_prefix", "cli-test", "rid-2", "MCP list_documents", 3,
+                 "documents"))
+            cur.execute(
+                "INSERT INTO agent_audit(subject, client_id, request_id,"
+                " statement, rows_returned, resource_id) VALUES (%s,%s,%s,%s,%s,%s)",
+                ("usr_agctl_prefix", "cli-test", "rid-3", "MCP read_document id=7", 1,
+                 "documents:7"))
+    rows = agctl._fetch_audit(limit=5, sub="usr_agctl_prefix",
+                              resource_prefix="documents")
+    got = {r[7] for r in rows}
+    assert "documents" in got            # collection-level op
+    assert "documents:7" in got          # per-row op
+    other = agctl._fetch_audit(limit=5, sub="usr_agctl_prefix",
+                               resource_prefix="redact_text")
+    assert all(r[7] != "documents" and not r[7].startswith("documents")
+               for r in other)
 
 
 def test_audit_denied_filter_only_zero_row_ops(capsys, monkeypatch):

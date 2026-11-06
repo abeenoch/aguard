@@ -327,12 +327,13 @@ def test_mcp_human_surfaces_pii_and_redactor_scrubs_audit(env):
     with scoped_session(kind="human", sub=ALICE) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT statement, rows_returned FROM agent_audit "
+                "SELECT statement, rows_returned, resource_id FROM agent_audit "
                 "WHERE subject = %s AND statement LIKE '%%delete_document%%' "
                 "ORDER BY id DESC LIMIT 1", (ALICE,))
             row = cur.fetchone()
     assert row is not None, "refused MCP operation was not audited"
     assert row[1] == 0
+    assert row[2] == f"documents:{doc_id}"
 
 
 # --------------------------- redact_text tool ------------------------------

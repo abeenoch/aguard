@@ -63,12 +63,13 @@ def _redacted_statement(text: str) -> str:
 
 
 def _audit(cur, principal: Principal, request_id: str,
-           statement: str, rows_returned: int) -> None:
+           statement: str, rows_returned: int,
+           resource_id: str = "") -> None:
     cur.execute(
         "INSERT INTO agent_audit(subject, client_id, request_id, statement,"
-        " rows_returned) VALUES (%s, %s, %s, %s, %s)",
+        " rows_returned, resource_id) VALUES (%s, %s, %s, %s, %s, %s)",
         (principal.sub, principal.client_id, request_id,
-         _redacted_statement(statement), rows_returned))
+         _redacted_statement(statement), rows_returned, resource_id))
 
 
 #: Loopback hosts the MCP SDK protects by default. A DNS-rebinding attack needs
@@ -92,13 +93,14 @@ def _transport_security() -> TransportSecuritySettings:
     )
 
 
-def _audit_denied(principal: Principal, request_id: str, statement: str) -> None:
+def _audit_denied(principal: Principal, request_id: str, statement: str,
+                  resource_id: str = "") -> None:
     """A refused write must still be auditable — but the refused transaction
     rolled back, so its rows are gone. Log the denial on a fresh session."""
     try:
         with scoped_session(kind=_kind(principal), sub=principal.sub) as conn:  # type: ignore[arg-type]
             with conn.cursor() as cur:
-                _audit(cur, principal, request_id, statement, 0)
+                _audit(cur, principal, request_id, statement, 0, resource_id)
     except Exception:  # pragma: no cover - auditing must never mask the denial
         logger.exception("failed to audit denied MCP operation")
 
@@ -118,7 +120,8 @@ def list_documents(ctx: Context) -> list[dict]:
             cur.execute("SELECT id, owner_sub, title, body FROM agent_documents "
                         "ORDER BY id")
             rows = cur.fetchall()
-            _audit(cur, principal, rid, "MCP list_documents", len(rows))
+            _audit(cur, principal, rid, "MCP list_documents", len(rows),
+                   "documents")
     return [_row(r) for r in rows]
 
 
@@ -134,7 +137,8 @@ def read_document(document_id: int, ctx: Context) -> dict | None:
                         "WHERE id = %s", (document_id,))
             row = cur.fetchone()
             _audit(cur, principal, rid,
-                   f"MCP read_document id={document_id}", 1 if row else 0)
+                   f"MCP read_document id={document_id}", 1 if row else 0,
+                   f"documents:{document_id}")
     return _row(row) if row is not None else None
 
 
@@ -153,14 +157,15 @@ def delete_document(document_id: int, ctx: Context) -> dict:
                 cur.execute("DELETE FROM documents WHERE id = %s RETURNING id",
                             (document_id,))
                 deleted = cur.fetchone()
-                _audit(cur, principal, rid, statement, 1 if deleted else 0)
+                _audit(cur, principal, rid, statement, 1 if deleted else 0,
+                       f"documents:{document_id}")
     except Exception as exc:
         # The money path: an agent session meets InsufficientPrivilege from
         # the DBMS itself. We REPORT it — never retry, escalate, or translate
         # it into success.
         logger.info({"event": "mcp.documents.delete_refused", "request_id": rid,
                      "sub": principal.sub, "reason": type(exc).__name__})
-        _audit_denied(principal, rid, statement)
+        _audit_denied(principal, rid, statement, f"documents:{document_id}")
         return {"deleted": False,
                 "reason": "refused by database policy — insufficient privilege"}
     if deleted is None:
@@ -197,7 +202,7 @@ def redact_text(text: str, ctx: Context) -> dict:
             # the leak the tool exists to prevent.
             _audit(cur, principal, rid,
                    f"MCP redact_text chars={len(text)} findings={total}",
-                   total)
+                   total, "redact_text")
     return {"redacted": redacted, "findings": findings}
 
 
