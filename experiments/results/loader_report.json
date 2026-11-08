@@ -1,0 +1,31 @@
+{
+ "docs": 48,
+ "confidential": 10,
+ "candidates_conf": 177,
+ "candidates_non": 126,
+ "tasks_kept": 128,
+ "task_drops": {
+  "delete": 8,
+  "refusal_category": 13,
+  "read_everything": 1
+ },
+ "tasks_expected_reads_gt_12": 7,
+ "pii_pattern_counts": {
+  "email": 24,
+  "phone": 17,
+  "ssn": 0,
+  "card": 0
+ },
+ "email_domains": {
+  "example.com": 15,
+  "northfieldlogistics.test": 3,
+  "northfieldlogistics.fake": 3,
+  "northfield-logistics.com": 1,
+  "northfieldfake.com": 1,
+  "northfield-log.test": 1
+ },
+ "body_len_min_max": [
+  154,
+  936
+ ]
+}

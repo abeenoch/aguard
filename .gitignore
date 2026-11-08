@@ -27,3 +27,7 @@ pytest.err
 # Generated demo artifacts (rebuild with scripts/demo.sh; see docs/DEMO_SCRIPT.md)
 docs/demo.cast
 docs/demo-transcript.txt
+experiments/.env
+experiments/run/
+experiments/run.log
+__pycache__/

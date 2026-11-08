@@ -1,0 +1,5 @@
+model,B,V1,V2,evasion_gap,recovered_V3,recovered_V4
+small,0,0.0,0.0,0.0,n/a,n/a
+small,3,0.05,0.0,-0.05,n/a,n/a
+strong,0,0.5882352941176471,0.23529411764705882,-0.353,n/a,n/a
+strong,3,0.0,0.15,0.15,0.0,4.667
