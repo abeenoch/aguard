@@ -36,7 +36,7 @@ app = modal.App("aguard-vllm")
 @modal.web_server(port=PORT, startup_timeout=900, requires_proxy_auth=True)
 def serve():
     subprocess.Popen([
-        "vllm==0.33.0", "serve", MODEL,
+        "vllm", "serve", MODEL,
         "--served-model-name", SERVED_NAME,
         "--host", "0.0.0.0",
         "--port", str(PORT),
