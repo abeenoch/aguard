@@ -34,7 +34,7 @@ with psycopg.connect(host="localhost", dbname="agurd_exp", user="postgres",
             "max_single": max((len(s) for s in per.values()), default=0)}
 
 def thr(cal):
-    for t in sorted(set(cal)) + [float("inf")]:
+    for t in sorted(set(cal)) + [float(np.nextafter(max(cal), np.inf))]:
         if np.mean([x >= t for x in cal]) <= 0.05:
             return t
 def auroc(p, n):

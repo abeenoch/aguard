@@ -22,7 +22,7 @@ def auroc(pos, neg):
     if not len(pos) or not len(neg): return float("nan")
     return float(np.mean([(p > n) + 0.5 * (p == n) for p in pos for n in neg]))
 def thr(cal):
-    for t in sorted(set(cal)) + [float("inf")]:
+    for t in sorted(set(cal)) + [float(np.nextafter(max(cal), np.inf))]:
         if np.mean([c >= t for c in cal]) <= 0.05: return t
 def boot(x, t):
     x = np.array(x);  
