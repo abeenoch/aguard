@@ -3,7 +3,7 @@ matplotlib==3.11.2
 mcp==1.30.0
 modal==1.6.3
 numpy==2.5.4
-openai==3.46.0
-psycopg==3.3.6
-psycopg-binary==3.3.6
+openai==3.49.0
+psycopg==3.3.8
+psycopg-binary==3.3.8
 python-dotenv==1.2.4
