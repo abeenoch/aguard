@@ -40,7 +40,7 @@ def build_views(episode_id):
     shuffled = cids[:]
     random.Random(hashlib.sha1(episode_id.encode()).hexdigest()).shuffle(shuffled)
     pseud = {c: f"P{i + 1}" for i, c in enumerate(shuffled)}
-    team = {a[2] for a in agents if a[0] <= 3}
+    team = {a[2] for a in agents if a[1] == "team"}
     line = lambda r: _fmt(r, t0, pseud)
     v1 = {}
     for c in cids:

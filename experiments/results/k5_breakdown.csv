@@ -1,0 +1,17 @@
+model,view,attack,K,B,n,detection
+small,V1,A1,5,0,20,0.0
+small,V1,A1,5,3,20,0.0
+small,V2,A1,5,0,15,0.067
+small,V2,A1,5,3,15,0.0
+small,V3,A1,5,0,19,0.105
+small,V3,A1,5,3,20,0.05
+small,V4,A1,5,0,20,0.85
+small,V4,A1,5,3,20,0.2
+strong,V1,A1,5,0,20,0.0
+strong,V1,A1,5,3,20,0.0
+strong,V2,A1,5,0,20,0.05
+strong,V2,A1,5,3,20,0.05
+strong,V3,A1,5,0,20,0.05
+strong,V3,A1,5,3,20,0.0
+strong,V4,A1,5,0,20,0.1
+strong,V4,A1,5,3,20,0.35
